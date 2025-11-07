@@ -17,6 +17,7 @@ final class FeedEntryModel: Identifiable, Hashable {
     var content: String
     var author: String?
     var sourceTitle: String?
+    var sourceURL: String?
     var pubDateString: String?
     var date: Date
     
@@ -32,6 +33,7 @@ final class FeedEntryModel: Identifiable, Hashable {
         content: String,
         author: String? = nil,
         sourceTitle: String? = nil,
+        sourceURL: String? = nil,
         pubDateString: String? = nil,
         date: Date = Date(),
         isBookmarked: Bool = false,
@@ -44,6 +46,7 @@ final class FeedEntryModel: Identifiable, Hashable {
         self.content = content
         self.author = author
         self.sourceTitle = sourceTitle
+        self.sourceURL = sourceURL
         self.pubDateString = pubDateString
         self.date = date
         self.isBookmarked = isBookmarked

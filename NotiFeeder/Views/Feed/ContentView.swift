@@ -98,6 +98,7 @@ struct FeedListView: View {
                     let detailEntry: FeedEntry = {
                         var updated = entry
                         updated.sourceTitle = feedName
+                        updated.feedURL = matchedFeed?.url
                         return updated
                     }()
                     let isBookmarked = bookmarkedLinks.contains(detailEntry.link)
@@ -286,7 +287,8 @@ extension FeedListView {
                             title: entry.title,
                             link: entry.link,
                             publishedAt: entry.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) },
-                            summary: HTMLText.stripHTML(entry.content)
+                            summary: HTMLText.stripHTML(entry.content),
+                            feedTitle: feed.title
                         )
                     }
                     store.mergeArticles(storedArticles, for: feed.url)
@@ -507,10 +509,10 @@ struct EmptyFeedView: View {
         .padding(.vertical, 32)
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity, alignment: .center)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(theme.uiAccentColor.opacity(0.12))
-        )
+        //.background(
+        //    RoundedRectangle(cornerRadius: 22, style: .continuous)
+         //       .fill(theme.uiAccentColor.opacity(0.12))
+        //)
     }
 }
 

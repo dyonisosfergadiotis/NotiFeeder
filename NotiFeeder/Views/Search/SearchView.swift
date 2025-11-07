@@ -84,7 +84,9 @@ struct SearchView: View {
                         let feedColor = theme.color(for: result.feedURL)
                         let isRead = store.isRead(articleID: result.link)
                         let isBookmarked = bookmarkedLinks.contains(result.link)
-                        NavigationLink(value: result.feedEntry) {
+                        Button {
+                            path.append(result.feedEntry)
+                        } label: {
                             ArticleCardView(
                                 feedTitle: result.feedTitle,
                                 feedColor: feedColor,
@@ -206,18 +208,13 @@ private struct ArticleSearchResult: Identifiable {
         self.summary = article.summary
         self.link = article.link
         self.publishedAt = article.publishedAt
-        self.feedTitle = feedTitle
+        self.feedTitle = article.feedTitle ?? feedTitle
         self.feedURL = feedURL
         self.isRead = isRead
     }
 
     var feedEntry: FeedEntry {
-        let dateString: String?
-        if let date = publishedAt {
-            dateString = DateFormatter.rfc822.string(from: date)
-        } else {
-            dateString = nil
-        }
+        let dateString = publishedAt.map { DateFormatter.rfc822.string(from: $0) }
 
         return FeedEntry(
             title: title,
@@ -226,6 +223,7 @@ private struct ArticleSearchResult: Identifiable {
             content: summary ?? "",
             author: nil,
             sourceTitle: feedTitle,
+            feedURL: feedURL,
             pubDateString: dateString,
             isRead: isRead
         )

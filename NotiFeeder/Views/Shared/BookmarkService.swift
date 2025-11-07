@@ -30,6 +30,7 @@ enum BookmarkService {
             existing.content = HTMLText.stripHTML(entry.content)
             existing.author = entry.author
             existing.sourceTitle = entry.sourceTitle
+            existing.sourceURL = entry.feedURL
             existing.pubDateString = entry.pubDateString
             existing.date = (entry.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }) ?? Date()
             existing.isBookmarked = true
@@ -41,6 +42,7 @@ enum BookmarkService {
                 content: HTMLText.stripHTML(entry.content),
                 author: entry.author,
                 sourceTitle: entry.sourceTitle,
+                sourceURL: entry.feedURL,
                 pubDateString: entry.pubDateString,
                 date: (entry.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }) ?? Date(),
                 isBookmarked: true,

@@ -20,10 +20,20 @@ public struct FeedEntry: Identifiable, Hashable, Codable {
     public var imageURL: String?
     public var author: String?
     public var sourceTitle: String?
+    public var feedURL: String?
     public var pubDateString: String?
     public var isRead: Bool = false
 
-    public init(title: String, shortTitle: String? = nil, link: String, content: String, imageURL: String? = nil, author: String? = nil, sourceTitle: String? = nil, pubDateString: String? = nil, isRead: Bool = false) {
+    public init(title: String,
+                shortTitle: String? = nil,
+                link: String,
+                content: String,
+                imageURL: String? = nil,
+                author: String? = nil,
+                sourceTitle: String? = nil,
+                feedURL: String? = nil,
+                pubDateString: String? = nil,
+                isRead: Bool = false) {
         self.title = title
         self.shortTitle = shortTitle ?? title
         self.link = link
@@ -31,6 +41,7 @@ public struct FeedEntry: Identifiable, Hashable, Codable {
         self.imageURL = imageURL
         self.author = author
         self.sourceTitle = sourceTitle
+        self.feedURL = feedURL
         self.pubDateString = pubDateString
         self.isRead = isRead
     }

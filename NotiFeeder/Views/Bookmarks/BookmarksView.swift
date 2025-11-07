@@ -25,9 +25,22 @@ struct BookmarksView: View {
         NavigationStack(path: $path) {
             Group {
                 if bookmarkedEntries.isEmpty {
-                    Text("Noch keine Lesezeichen vorhanden.")
-                        .foregroundColor(.secondary)
-                        .navigationTitle("Lesezeichen")
+                    VStack(spacing: 12) {
+                        Image(systemName: "bookmark.slash")
+                            .font(.system(size: 44))
+                            .foregroundStyle(theme.uiAccentColor)
+                        Text("Keine Lesezeichen gespeichert")
+                            .font(.headline)
+                            .foregroundStyle(theme.uiAccentColor)
+                            .navigationTitle("Lesezeichen")
+                        Text("Markierte Artikel werden hier angezeigt")
+                            .font(.subheadline)
+                            .foregroundStyle(Color(.tertiaryLabel))
+                            .multilineTextAlignment(.center)
+                    }.padding(.vertical, 32)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        
                 } else {
                     List(bookmarkedEntries) { entry in
                         let feedEntry = FeedEntry(
@@ -36,32 +49,38 @@ struct BookmarksView: View {
                             content: entry.content,
                             author: entry.author ?? "Unbekannt",
                             sourceTitle: entry.sourceTitle ?? "Unbekannt",
+                            feedURL: entry.sourceURL,
                             pubDateString: entry.pubDateString ?? ""
                         )
-                    let matchedFeed = feedForEntry(feedEntry)
-                    let feedColor = theme.color(for: matchedFeed?.url)
-                    let feedName = matchedFeed?.title ?? entry.sourceTitle ?? "Unbekannte Quelle"
-                    let detailEntry: FeedEntry = {
-                        var updated = feedEntry
+                        let matchedFeed = feedForEntry(feedEntry)
+                        let feedName = matchedFeed?.title ?? entry.sourceTitle ?? "Unbekannte Quelle"
+                        let colorSourceURL = matchedFeed?.url
+                            ?? feedEntry.feedURL
+                            ?? feeds.first(where: { $0.title.caseInsensitiveCompare(feedName) == .orderedSame })?.url
+                        let feedColor = theme.color(for: colorSourceURL)
+                        let detailEntry: FeedEntry = {
+                            var updated = feedEntry
                             updated.sourceTitle = feedName
+                            updated.feedURL = colorSourceURL
                             return updated
                         }()
-                    let entryDate = entry.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }
-                    let isRead = store.isRead(articleID: entry.link)
+                        let entryDate = entry.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }
+                        let isRead = store.isRead(articleID: entry.link)
 
-                    Button {
-                        path.append(detailEntry)
-                    } label: {
-                        ArticleCardView(
-                            feedTitle: feedName,
-                            feedColor: feedColor,
-                            title: entry.title,
-                            summary: nil,
-                            isRead: isRead,
-                            date: entryDate
-                        )
-                        .contentShape(Rectangle())
-                    }
+                        Button {
+                            path.append(detailEntry)
+                        } label: {
+                            ArticleCardView(
+                                feedTitle: feedName,
+                                feedColor: feedColor,
+                                title: entry.title,
+                                summary: nil,
+                                isRead: isRead,
+                                date: entryDate,
+                                isBookmarked: true
+                            )
+                            .contentShape(Rectangle())
+                        }
                     .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                     .listRowSeparator(.hidden)

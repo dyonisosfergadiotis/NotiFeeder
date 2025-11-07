@@ -8,7 +8,7 @@ struct ArticleCardView: View {
     let summary: String?
     let isRead: Bool
     let date: Date?
-    let isBookmarked: Bool = false
+    let isBookmarked: Bool
 
     private var hasSummary: Bool {
         guard let summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -44,7 +44,7 @@ struct ArticleCardView: View {
                         if isBookmarked {
                             Image(systemName: "bookmark.fill")
                                 .font(.caption)
-                                .foregroundStyle(feedColor)
+                                .foregroundColor(feedColor)
                         }
                         if let formattedDate {
                             Text(formattedDate)

@@ -15,6 +15,7 @@ public struct StoredFeedArticle: Codable, Hashable, Identifiable {
     public let link: String
     public let publishedAt: Date?
     public let summary: String?
+    public let feedTitle: String?
 }
 
 public struct StoredFeedSource: Codable, Hashable, Identifiable {

@@ -289,19 +289,12 @@ private struct FeedsSection: View {
                 }
             }
             .onDelete(perform: onDelete)
-
+            
             Button(action: onAdd) {
                 Label("Feed hinzufügen", systemImage: "plus")
             }
             .tint(accentColor)
             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
-
-            Text("Tipp: Streiche nach rechts und tippe auf \"Bearbeiten\", um Titel, URL oder Farbe anzupassen.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .padding(.top, 6)
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 8, trailing: 16))
         }
     }
 }
@@ -447,25 +440,21 @@ private struct NotificationFeedSelectionView: View {
                                 selectedFeeds = []
                             }
                         }
-                    Section {
-                    } footer: {
-                        EmptyView()
-                    }
-                    Spacer()
+                } footer: {
+                    Text("Aktiviere Benachrichtigungen und entscheide anschließend, welche Feeds Meldungen senden dürfen.")
+                }
+                
+                Section {
                     ForEach(sortedFeeds) { feed in
                         Toggle(isOn: binding(for: feed)) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(feed.title)
                                     .appTitle()
-                                Text(feed.url)
-                                    .appSecondary()
                             }
                         }
                         .tint(accentColor)
                         .disabled(!notificationsEnabled || !systemAllowsNotifications)
                     }
-                } footer: {
-                    Text("Aktiviere Benachrichtigungen und entscheide anschließend, welche Feeds Meldungen senden dürfen.")
                 }
             }
         }

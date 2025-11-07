@@ -1,16 +1,27 @@
 import SwiftUI
 
-@main
-struct MyApp: App {
-    @StateObject private var model = Model()
-    @StateObject private var settings = Settings()
+/// Wrap your root view with this to inject shared environment objects and enable background refresh
+struct AppRoot<Content: View>: View {
+    private let content: Content
+    @StateObject private var theme = ThemeSettings()
 
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environmentObject(model)
-                .environmentObject(settings)
-                .enableBackgroundRefresh()
-        }
+    // Use a shared instance if ArticleStore has a private init
+    @StateObject private var store = ArticleStore.shared
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .environmentObject(store)
+            .environmentObject(theme)
+            .enableBackgroundRefresh()
+    }
+}
+
+#Preview {
+    AppRoot {
+        ContentView()
     }
 }

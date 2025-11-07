@@ -1,37 +1,53 @@
+//
+//  FeedBackgroundFetcher.swift
+//  NotiFeeder
+//
+//  Created by Dyonisos Fergadiotis on 04.11.25.
+//
+
+
 import Foundation
 import UserNotifications
 
-@MainActor
 final class FeedBackgroundFetcher {
     static let shared = FeedBackgroundFetcher()
 
     private init() {}
 
     func checkForNewEntries(feeds: [FeedSource]) async {
-        var newEntries: [FeedEntry] = []
+        guard !feeds.isEmpty else { return }
+        var fetchedResults: [(feed: FeedSource, entries: [FeedEntry])] = []
 
-        await withTaskGroup(of: [FeedEntry].self) { group in
+        await withTaskGroup(of: (FeedSource, [FeedEntry]).self) { group in
             for feed in feeds {
-                group.addTask { await self.fetchFeed(feed) }
+                group.addTask { (feed, await self.fetchFeed(feed)) }
             }
-            for await result in group {
-                newEntries.append(contentsOf: result)
+            for await (feed, entries) in group {
+                fetchedResults.append((feed, entries))
             }
         }
 
-        // Vergleiche mit lokalem Cache
+        let flattenedEntries: [(FeedSource, FeedEntry)] = fetchedResults.flatMap { result in
+            result.entries.map { (result.feed, $0) }
+        }
+
         let cachedLinks = UserDefaults.standard.stringArray(forKey: "cachedLinks") ?? []
-        let newOnes = newEntries.filter { !cachedLinks.contains($0.link) }
+        let newPairs = flattenedEntries.filter { pair in !cachedLinks.contains(pair.1.link) }
 
-        if !newOnes.isEmpty {
-            // Speichern der neuen Links für nächsten Vergleich
-            let allLinks = Set(cachedLinks + newOnes.map(\.link))
-            UserDefaults.standard.set(Array(allLinks), forKey: "cachedLinks")
+        guard !newPairs.isEmpty else { return }
 
-            // Benachrichtigen
-            for entry in newOnes.prefix(3) { // max. 3 Pushes gleichzeitig
-                sendNotification(for: entry)
-            }
+        let allLinks = Set(cachedLinks + newPairs.map { $0.1.link })
+        UserDefaults.standard.set(Array(allLinks), forKey: "cachedLinks")
+
+        guard NotificationPreferenceStore.notificationsEnabled() else { return }
+        let allowedFeeds = NotificationPreferenceStore.allowedFeedURLs(availableFeeds: feeds)
+        guard !allowedFeeds.isEmpty else { return }
+
+        let allowedPairs = newPairs.filter { allowedFeeds.contains($0.0.url) }
+        guard !allowedPairs.isEmpty else { return }
+
+        for (_, entry) in allowedPairs.prefix(3) {
+            sendNotification(for: entry)
         }
     }
 
@@ -47,10 +63,38 @@ final class FeedBackgroundFetcher {
         }
     }
 
+    private func plainText(from html: String) -> String {
+        // Pure Foundation fallback: strip tags and decode common entities
+        var text = html
+            .replacingOccurrences(of: "<script[\\s\\S]*?</script>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "<style[\\s\\S]*?</style>", with: "", options: .regularExpression)
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+
+        // collapse whitespace
+        text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func oneLineSummary(from html: String, limit: Int = 140) -> String {
+        let text = plainText(from: html).replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.count <= limit { return text }
+        let idx = text.index(text.startIndex, offsetBy: limit)
+        var trimmed = String(text[..<idx])
+        if let lastSpace = trimmed.lastIndex(of: " ") { trimmed = String(trimmed[..<lastSpace]) }
+        return trimmed
+    }
+
     private func sendNotification(for entry: FeedEntry) {
         let content = UNMutableNotificationContent()
         content.title = entry.title
-        content.body = entry.sourceTitle ?? "Neuer Artikel verfügbar"
+        let summary = oneLineSummary(from: entry.content)
+        content.body = summary.isEmpty ? (entry.sourceTitle ?? "Neuer Artikel verfügbar") : summary
         content.sound = .default
 
         let request = UNNotificationRequest(identifier: entry.link, content: content, trigger: nil)

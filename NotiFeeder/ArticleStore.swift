@@ -3,12 +3,13 @@
 // This is a minimal, dependency-free approach and can be swapped to SwiftData later.
 
 import Foundation
+import Combine
 
 // MARK: - Models expected in the app
 // If these already exist elsewhere in the project, ensure these mirror the existing definitions
 // or remove these duplicates and import the existing ones. The store relies on Codable.
 
-public struct FeedArticle: Codable, Hashable, Identifiable {
+public struct StoredFeedArticle: Codable, Hashable, Identifiable {
     public var id: String { link }
     public let title: String
     public let link: String
@@ -16,7 +17,7 @@ public struct FeedArticle: Codable, Hashable, Identifiable {
     public let summary: String?
 }
 
-public struct FeedSource: Codable, Hashable, Identifiable {
+public struct StoredFeedSource: Codable, Hashable, Identifiable {
     public var id: String { url }
     public let title: String
     public let url: String
@@ -31,7 +32,7 @@ final class ArticleStore: ObservableObject {
     private let readKey = "readArticleIDs"
 
     // In-memory cache
-    @Published private(set) var articlesByFeed: [String: [FeedArticle]] = [:] // key: feed URL
+    @Published private(set) var articlesByFeed: [String: [StoredFeedArticle]] = [:] // key: feed URL
     @Published private(set) var readArticleIDs: Set<String> = []
 
     private let defaults: UserDefaults
@@ -50,7 +51,7 @@ final class ArticleStore: ObservableObject {
     private func loadFromDisk() {
         // Load articles
         if let data = defaults.data(forKey: articlesKey),
-           let loaded = try? decoder.decode([String: [FeedArticle]].self, from: data) {
+           let loaded = try? decoder.decode([String: [StoredFeedArticle]].self, from: data) {
             self.articlesByFeed = loaded
         }
         // Load read-state
@@ -80,11 +81,11 @@ final class ArticleStore: ObservableObject {
     }
 
     // MARK: Public API
-    func articles(for feedURL: String) -> [FeedArticle] {
+    func articles(for feedURL: String) -> [StoredFeedArticle] {
         articlesByFeed[feedURL] ?? []
     }
 
-    func mergeArticles(_ newArticles: [FeedArticle], for feedURL: String) {
+    func mergeArticles(_ newArticles: [StoredFeedArticle], for feedURL: String) {
         var existing = articlesByFeed[feedURL] ?? []
         let existingIDs = Set(existing.map { $0.id })
         let uniques = newArticles.filter { !existingIDs.contains($0.id) }

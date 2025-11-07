@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct AppVersion {
@@ -93,3 +94,4 @@ private struct WhatsNewPresenter: ViewModifier {
     }
     .whatsNewOnUpdate(manager: ReleaseNotesManager())
 }
+

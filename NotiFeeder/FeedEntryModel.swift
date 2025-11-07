@@ -6,3 +6,54 @@
 //
 
 import Foundation
+import SwiftData
+
+@Model
+final class FeedEntryModel: Identifiable, Hashable {
+    var id: UUID
+    var title: String
+    var shortTitle: String
+    var link: String
+    var content: String
+    var author: String?
+    var sourceTitle: String?
+    var pubDateString: String?
+    var date: Date
+    
+    // Flags für Status
+    var isBookmarked: Bool = false
+    var isRead: Bool = false
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        shortTitle: String? = nil,
+        link: String,
+        content: String,
+        author: String? = nil,
+        sourceTitle: String? = nil,
+        pubDateString: String? = nil,
+        date: Date = Date(),
+        isBookmarked: Bool = false,
+        isRead: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.shortTitle = shortTitle ?? title
+        self.link = link
+        self.content = content
+        self.author = author
+        self.sourceTitle = sourceTitle
+        self.pubDateString = pubDateString
+        self.date = date
+        self.isBookmarked = isBookmarked
+        self.isRead = isRead
+    }
+    static func == (lhs: FeedEntryModel, rhs: FeedEntryModel) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}

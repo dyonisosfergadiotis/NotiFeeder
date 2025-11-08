@@ -170,7 +170,7 @@ struct FeedDetailView: View {
         let lineHeight = readerLineSpacing
         let fontFamilyCSS = (ReaderFontFamily(rawValue: readerFontFamily) ?? .system).cssValue
 
-        """
+        return  """
         <html>
           <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">

@@ -1,6 +1,6 @@
 # NotiFeeder
 
-NotiFeeder ist eine native iOS-/iPadOS-App zum Verwalten beliebiger RSS-Feeds. Die App sammelt neue Artikel, zeigt sie in einer kompakten Kartenansicht an, erlaubt Bookmarks, Volltextsuche, Lesestatus und verschickt lokale Benachrichtigungen pro Artikel. Das aktuelle Release trägt die Versionsnummer **1.2.3**.
+NotiFeeder is a native iOS/iPadOS app for managing arbitrary RSS feeds. It aggregates fresh articles, displays them in a compact card layout, supports bookmarking, full-text search, read-state tracking, and fires per-article local notifications. Built entirely with SwiftUI + SwiftData, it focuses on a smooth reading workflow without external dependencies.
 
 ## Features
 
@@ -12,56 +12,44 @@ NotiFeeder ist eine native iOS-/iPadOS-App zum Verwalten beliebiger RSS-Feeds. D
 - **Hintergrundaktualisierung**: Über `BGAppRefreshTask` werden Feeds regelmäßig aktualisiert; neue Artikel werden auch im Hintergrund erkannt.
 - **Theming**: Jeder Feed kann eine eigene Farbe erhalten; das globale Farbschema richtet sich nach `ThemeSettings`.
 
-## Anforderungen
+## Requirements
 
-- Xcode 15.3 oder neuer (Swift 5.9, iOS 17 SDK – `IPHONEOS_DEPLOYMENT_TARGET = 17.0`).
-- Ein iOS-/iPadOS-Gerät oder Simulator mit iOS 17.
-- Für Benachrichtigungen muss der Nutzer die entsprechenden Berechtigungen erlauben.
-
-## Projektstruktur (Auszug)
-
-```
-NotiFeeder/
-├─ ArticleStore.swift            # Persistenz für Artikel + Lesestatus (UserDefaults)
-├─ NotificationScheduler.swift   # Erzeugt lokale Benachrichtigungen
-├─ FeedBackgroundFetcher.swift   # Hintergrund-Refresh via BGTask
-├─ Views/                        # UI (Feed, Suche, Bookmarks, Settings …)
-├─ NotificationDeliveryTracker.swift # Hilfsklasse zur Duplikat-Vermeidung bei Notifications
-└─ ReleaseNotes.swift            # What's-New-Flow für neue Versionen
-```
+- Xcode 15.3 or newer (Swift 5.9, iOS 17 SDK – `IPHONEOS_DEPLOYMENT_TARGET = 17.0`).
+- An iOS/iPadOS 17 device or simulator.
+- Notifications must be enabled by the user if reminders are desired.
 
 ## Build & Run
 
-1. Projekt klonen und in das Verzeichnis wechseln.
-2. In Xcode öffnen (`open NotiFeeder.xcodeproj`) oder via CLI bauen:
+1. Clone the repo and `cd` into it.
+2. Open in Xcode via `open NotiFeeder.xcodeproj` or build via CLI:
 
    ```bash
    xcodebuild -scheme NotiFeeder -project NotiFeeder.xcodeproj
    ```
 
-3. Zielgerät/Simulator auswählen, Run (`⌘R`). Beim ersten Start nach Feeds gefragt werden (Einstellungen → Feeds).
+3. Select your target device/simulator and hit Run (`⌘R`). On first launch add or edit feeds in **Settings → Feeds**.
 
-### Hinweise zu Benachrichtigungen
+### Notifications
 
-- Beim ersten Start fordert `NotificationScheduler` die Berechtigung an.
-- Welche Feeds Notifications senden dürfen, lässt sich im Tab „Einstellungen“ unter „Benachrichtigungen“ konfigurieren.
-- Die App verschickt einzelne Notifications pro Artikel (kein Sammelbadge), inklusive Feed-Titel und kurzem AUSZUG.
+- `NotificationScheduler` requests permission at first launch.
+- Per-feed notification toggles live in **Settings → Notifications**.
+- Each incoming article triggers its own local notification that names the feed and shows a short excerpt.
 
-### Hintergrundaktualisierung
+### Background refresh
 
-- Die App registriert `BGAppRefreshTask` mit Identifier `de.dyonisos.NotiFeeder.refresh`.
-- Die Intervall-Steuerung liegt bei iOS; standardmäßig wird alle 30 Minuten ein neuer Task angefragt (`scheduleNextFetch`).
+- Uses `BGAppRefreshTask` with identifier `de.dyonisos.NotiFeeder.refresh`.
+- iOS decides the actual schedule; the app re-requests roughly every 30 minutes via `scheduleNextFetch()`.
 
-## Datenhaltung
+## Data storage
 
-- **Feeds & Artikel**: werden in `UserDefaults` als JSON gespeichert (`savedFeeds`, `savedArticles`).
-- **Bookmarks**: SwiftData `FeedEntryModel` in der Standard-Model-Container-Konfiguration (lokal auf dem Gerät).
-- **Lesestatus**: separate ID-Liste (`readArticleIDs`) in `UserDefaults`.
+- **Feeds & articles** live in `UserDefaults` (`savedFeeds`, `savedArticles`).
+- **Bookmarks** use SwiftData’s `FeedEntryModel` in the default local container.
+- **Read state** persists as a JSON list (`readArticleIDs`) in `UserDefaults`.
 
 ## Contribution & Support
 
-Pull-Requests werden willkommen geheißen. Bitte halte dich an SwiftLint-ähnliche Standards (keine force unwraps ohne Not, strukturierte SwiftUI-Layouts). Bei Fragen oder Bugreports einfach ein Issue anlegen.
+Pull requests welcome. Please follow typical SwiftLint-style conventions (no force unwraps without checks, well-structured SwiftUI layouts). Open an issue if you hit a bug or have ideas.
 
-## Lizenz
+## License
 
-Kein offizieller Lizenztext vorhanden – falls du den Code verwenden möchtest, bitte den Autor (Dyonisos Fergadiotis) kontaktieren.
+No explicit license yet. Contact the author (Dyonisos Fergadiotis) if you want to reuse code.

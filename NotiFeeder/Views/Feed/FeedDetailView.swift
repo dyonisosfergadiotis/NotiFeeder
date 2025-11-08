@@ -12,10 +12,28 @@ struct FeedDetailView: View {
     @EnvironmentObject private var store: ArticleStore
     @Environment(\.modelContext) private var modelContext
 
-    @State private var isSharing = false
+    @State private var webView = WKWebView()
     @State private var shareText: String = ""
+    @State private var activeSheet: ActiveSheet?
     @State private var isReadLocal: Bool = false
     @State private var isBookmarked: Bool = false
+    @AppStorage("readerFontScale") private var readerFontScale: Double = 1.0
+    @AppStorage("readerFontFamily") private var readerFontFamily: String = ReaderFontFamily.system.rawValue
+    @AppStorage("readerLineSpacing") private var readerLineSpacing: Double = 1.4
+
+    private enum ActiveSheet: Identifiable {
+        case share(payload: String, token: UUID = UUID())
+        case readerSettings
+
+        var id: UUID {
+            switch self {
+            case .share(_, let token): return token
+            case .readerSettings: return ActiveSheet.readerSettingsID
+            }
+        }
+
+        private static let readerSettingsID = UUID()
+    }
 
     init(entry: FeedEntry, feedColor: Color? = nil, onAppearMarkRead: (() -> Void)? = nil) {
         self.entry = entry
@@ -58,7 +76,8 @@ struct FeedDetailView: View {
                 )
 
                 // WebView unten
-                WebView(htmlContent: formattedHTML(accentHex: theme.uiAccentHexString))
+                WebView(webView: webView,
+                        htmlContent: formattedHTML(accentHex: theme.uiAccentHexString))
                     .frame(maxHeight: .infinity)
                     .edgesIgnoringSafeArea(.bottom)
             }
@@ -66,8 +85,7 @@ struct FeedDetailView: View {
             .animation(.smooth(duration: 0.22), value: entry.id)
             .toolbar {
                 ToolbarItemGroup(placement: .bottomBar) {
-                    HStack {
-                        Spacer()
+                    HStack(spacing: 28) {
                         Button {
                             if let url = URL(string: entry.link) {
                                 UIApplication.shared.open(url)
@@ -77,17 +95,12 @@ struct FeedDetailView: View {
                         }
                         .tint(feedColor ?? theme.uiAccentColor)
 
-                        Spacer()
-
                         Button {
-                            shareText = buildShareText()
-                            isSharing = true
+                            gatherShareContent()
                         } label: {
                             Image(systemName: "square.and.arrow.up")
                         }
                         .tint(feedColor ?? theme.uiAccentColor)
-
-                        Spacer()
 
                         Button {
                             let newValue = !isReadLocal
@@ -98,18 +111,23 @@ struct FeedDetailView: View {
                         }
                         .tint(feedColor ?? theme.uiAccentColor)
 
-                        Spacer()
-
                         Button {
                             toggleBookmark()
                         } label: {
                             Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
                         }
                         .tint(feedColor ?? theme.uiAccentColor)
-                        Spacer()
+
+                        Button {
+                            activeSheet = .readerSettings
+                        } label: {
+                            Image(systemName: "textformat.size")
+                        }
+                        .tint(feedColor ?? theme.uiAccentColor)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
                 }
             }
             .toolbarBackground((feedColor ?? theme.uiAccentColor).opacity(0.1), for: .bottomBar)
@@ -125,8 +143,17 @@ struct FeedDetailView: View {
                     isBookmarked = isCurrentlyBookmarked()
                 }
             }
-            .sheet(isPresented: $isSharing) {
-                ActivityView(activityItems: [shareText])
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .share(let payload, _):
+                    ActivityView(activityItems: [payload])
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                case .readerSettings:
+                    ReaderSettingsPanel(fontScale: $readerFontScale,
+                                        fontFamily: $readerFontFamily,
+                                        lineSpacing: $readerLineSpacing)
+                }
             }
         }
         .onAppear {
@@ -139,16 +166,20 @@ struct FeedDetailView: View {
 
 
     private func formattedHTML(accentHex: String) -> String {
+        let fontSize = 18 * readerFontScale
+        let lineHeight = readerLineSpacing
+        let fontFamilyCSS = (ReaderFontFamily(rawValue: readerFontFamily) ?? .system).cssValue
+
         """
         <html>
           <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
               body {
-                font-family: -apple-system;
-                font-size: 18px;
+                font-family: \(fontFamilyCSS);
+                font-size: \(fontSize)px;
                 padding: 16px;
-                line-height: 1.6;
+                line-height: \(lineHeight);
                 margin: 0;
               }
         
@@ -203,26 +234,25 @@ struct FeedDetailView: View {
         feedColor ?? theme.uiAccentColor
     }
 
-    private func summary(from text: String, limit: Int = 280) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.count <= limit { return trimmed }
-        // Try to cut at sentence boundary near the limit
-        let idx = trimmed.index(trimmed.startIndex, offsetBy: min(limit, trimmed.count))
-        var candidate = String(trimmed[..<idx])
-        if let lastDot = candidate.lastIndex(of: ".") {
-            candidate = String(candidate[...lastDot])
+    private func composeShareText(selectedSnippet: String?) -> String {
+        var parts: [String] = [entry.title, entry.link]
+        if let snippet = selectedSnippet, !snippet.isEmpty {
+            parts.append(snippet)
         }
-        return candidate.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+        return parts.joined(separator: "\n\n")
     }
 
-    private func buildShareText() -> String {
-        let text = HTMLText.stripHTML(entry.content)
-        let short = summary(from: text)
-        var parts: [String] = []
-        parts.append("Titel: \(entry.title)")
-        if !short.isEmpty { parts.append("\nZusammenfassung:\n\(short)") }
-        parts.append("\nLink: \(entry.link)")
-        return parts.joined(separator: "\n")
+    private func gatherShareContent() {
+        let script = "window.getSelection().toString();"
+        webView.evaluateJavaScript(script) { result, _ in
+            let snippet = (result as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            DispatchQueue.main.async {
+                let composed = composeShareText(selectedSnippet: (snippet?.isEmpty == false) ? snippet : nil)
+                shareText = composed
+                activeSheet = .share(payload: composed)
+            }
+        }
     }
 
     private func isCurrentlyBookmarked() -> Bool {
@@ -240,9 +270,10 @@ struct FeedDetailView: View {
 }
 
 struct WebView: UIViewRepresentable {
+    let webView: WKWebView
     let htmlContent: String
 
-    func makeUIView(context: Context) -> WKWebView { WKWebView() }
+    func makeUIView(context: Context) -> WKWebView { webView }
     func updateUIView(_ uiView: WKWebView, context: Context) {
         uiView.loadHTMLString(htmlContent, baseURL: nil)
     }

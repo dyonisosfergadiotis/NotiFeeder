@@ -283,8 +283,9 @@ private struct FeedsSection: View {
                     Button {
                         onEdit(feed)
                     } label: {
-                        Label("Bearbeiten", systemImage: "pencil")
+                        Image(systemName: "pencil")
                     }
+                    .accessibilityLabel("Feed bearbeiten")
                     .tint(theme.color(for: feed.url))
                 }
             }

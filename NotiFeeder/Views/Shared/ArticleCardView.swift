@@ -9,6 +9,28 @@ struct ArticleCardView: View {
     let isRead: Bool
     let date: Date?
     let isBookmarked: Bool
+    let highlightTerm: String?
+    let highlightColor: Color
+
+    init(feedTitle: String,
+         feedColor: Color,
+         title: String,
+         summary: String?,
+         isRead: Bool,
+         date: Date?,
+         isBookmarked: Bool,
+         highlightTerm: String? = nil,
+         highlightColor: Color = .accentColor) {
+        self.feedTitle = feedTitle
+        self.feedColor = feedColor
+        self.title = title
+        self.summary = summary
+        self.isRead = isRead
+        self.date = date
+        self.isBookmarked = isBookmarked
+        self.highlightTerm = highlightTerm
+        self.highlightColor = highlightColor
+    }
 
     private var hasSummary: Bool {
         guard let summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -55,14 +77,12 @@ struct ArticleCardView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(title)
+                    highlightableText(for: title, baseColor: titleColor)
                         .appTitle()
-                        .foregroundStyle(isRead ? Color.primary.opacity(0.65) : Color.primary)
 
                     if hasSummary, let summary {
-                        Text(summary)
+                        highlightableText(for: summary, baseColor: summaryColor)
                             .appSecondary()
-                            .foregroundStyle(isRead ? Color.secondary.opacity(0.85) : Color.primary.opacity(0.75))
                             .lineLimit(3)
                     }
                 }
@@ -79,5 +99,91 @@ struct ArticleCardView: View {
                     .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
             }
         }
+    }
+
+    private var normalizedHighlightTokens: [String] {
+        guard let highlightTerm else { return [] }
+        let trimmed = highlightTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        return trimmed
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { String($0) }
+            .filter { !$0.isEmpty }
+    }
+
+    private var titleColor: Color {
+        isRead ? Color.primary.opacity(0.65) : Color.primary
+    }
+
+    private var summaryColor: Color {
+        isRead ? Color.secondary.opacity(0.85) : Color.primary.opacity(0.75)
+    }
+
+    private func highlightableText(for content: String, baseColor: Color) -> Text {
+        let tokens = normalizedHighlightTokens
+        guard !tokens.isEmpty else {
+            return Text(content).foregroundColor(baseColor)
+        }
+
+        let ranges = mergedHighlightRanges(in: content, tokens: tokens)
+        guard !ranges.isEmpty else {
+            return Text(content).foregroundColor(baseColor)
+        }
+
+        var builder = Text("")
+        var currentIndex = content.startIndex
+
+        for range in ranges {
+            if currentIndex < range.lowerBound {
+                let prefix = String(content[currentIndex..<range.lowerBound])
+                builder = builder + Text(prefix).foregroundColor(baseColor)
+            }
+            let highlightSegment = String(content[range])
+            builder = builder + Text(highlightSegment)
+                .foregroundColor(highlightColor)
+                .fontWeight(.semibold)
+            currentIndex = range.upperBound
+        }
+
+        if currentIndex < content.endIndex {
+            let suffix = String(content[currentIndex..<content.endIndex])
+            builder = builder + Text(suffix).foregroundColor(baseColor)
+        }
+
+        return builder
+    }
+
+    private func mergedHighlightRanges(in content: String, tokens: [String]) -> [Range<String.Index>] {
+        var collected: [Range<String.Index>] = []
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+
+        for token in tokens {
+            var searchRange = content.startIndex..<content.endIndex
+            while let match = content.range(of: token, options: options, range: searchRange) {
+                collected.append(match)
+                searchRange = match.upperBound..<content.endIndex
+            }
+        }
+
+        guard !collected.isEmpty else { return [] }
+        let sorted = collected.sorted { $0.lowerBound < $1.lowerBound }
+        var merged: [Range<String.Index>] = []
+
+        for range in sorted {
+            guard var last = merged.last else {
+                merged.append(range)
+                continue
+            }
+            if range.lowerBound <= last.upperBound {
+                if range.upperBound > last.upperBound {
+                    last = last.lowerBound..<range.upperBound
+                    merged[merged.count - 1] = last
+                }
+            } else {
+                merged.append(range)
+            }
+        }
+
+        return merged
     }
 }

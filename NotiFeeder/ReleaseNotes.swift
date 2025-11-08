@@ -2,7 +2,7 @@ import Combine
 import SwiftUI
 
 struct AppVersion {
-    static let current = "1.2"
+    static let current = "1.2.3"
 }
 
 final class ReleaseNotesManager: ObservableObject {
@@ -38,7 +38,7 @@ struct WhatsNewView: View {
                     Image(systemName: "sparkles")
                         .imageScale(.large)
                         .foregroundStyle(.tint)
-                    Text("Neu in Version 1.2")
+                    Text("Neu in Version 1.2.3")
                         .font(.title2).bold()
                 }
 
@@ -94,4 +94,3 @@ private struct WhatsNewPresenter: ViewModifier {
     }
     .whatsNewOnUpdate(manager: ReleaseNotesManager())
 }
-

@@ -31,6 +31,7 @@ final class ArticleStore: ObservableObject {
     // Persisted keys
     private let articlesKey = "savedArticles"
     private let readKey = "readArticleIDs"
+    private let maxArticlesPerFeed = 100
 
     // In-memory cache
     @Published private(set) var articlesByFeed: [String: [StoredFeedArticle]] = [:] // key: feed URL
@@ -100,6 +101,9 @@ final class ArticleStore: ObservableObject {
                 case (nil, _?): return false
                 default: return lhs.title < rhs.title
                 }
+            }
+            if existing.count > maxArticlesPerFeed {
+                existing = Array(existing.prefix(maxArticlesPerFeed))
             }
             articlesByFeed[feedURL] = existing
             saveArticlesToDisk()

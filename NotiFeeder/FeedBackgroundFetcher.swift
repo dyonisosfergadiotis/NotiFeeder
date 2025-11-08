@@ -7,8 +7,6 @@
 
 
 import Foundation
-import UserNotifications
-
 final class FeedBackgroundFetcher {
     static let shared = FeedBackgroundFetcher()
 
@@ -30,14 +28,12 @@ final class FeedBackgroundFetcher {
         let flattenedEntries: [(FeedSource, FeedEntry)] = fetchedResults.flatMap { result in
             result.entries.map { (result.feed, $0) }
         }
+        let allEntries = flattenedEntries.map(\.1)
+        let brandNewEntries = NotificationDeliveryTracker.markAndReturnNew(entries: allEntries)
+        guard !brandNewEntries.isEmpty else { return }
 
-        let cachedLinks = UserDefaults.standard.stringArray(forKey: "cachedLinks") ?? []
-        let newPairs = flattenedEntries.filter { pair in !cachedLinks.contains(pair.1.link) }
-
-        guard !newPairs.isEmpty else { return }
-
-        let allLinks = Set(cachedLinks + newPairs.map { $0.1.link })
-        UserDefaults.standard.set(Array(allLinks), forKey: "cachedLinks")
+        let newIDs = Set(brandNewEntries.map(\.link))
+        let newPairs = flattenedEntries.filter { newIDs.contains($0.1.link) }
 
         guard NotificationPreferenceStore.notificationsEnabled() else { return }
         let allowedFeeds = NotificationPreferenceStore.allowedFeedURLs(availableFeeds: feeds)
@@ -46,8 +42,11 @@ final class FeedBackgroundFetcher {
         let allowedPairs = newPairs.filter { allowedFeeds.contains($0.0.url) }
         guard !allowedPairs.isEmpty else { return }
 
-        for (_, entry) in allowedPairs.prefix(3) {
-            sendNotification(for: entry)
+        for (feed, entry) in allowedPairs {
+            var enrichedEntry = entry
+            enrichedEntry.sourceTitle = feed.title
+            enrichedEntry.feedURL = feed.url
+            NotificationScheduler.shared.scheduleArticleNotification(for: enrichedEntry, feedTitle: feed.title)
         }
     }
 
@@ -63,41 +62,4 @@ final class FeedBackgroundFetcher {
         }
     }
 
-    private func plainText(from html: String) -> String {
-        // Pure Foundation fallback: strip tags and decode common entities
-        var text = html
-            .replacingOccurrences(of: "<script[\\s\\S]*?</script>", with: "", options: .regularExpression)
-            .replacingOccurrences(of: "<style[\\s\\S]*?</style>", with: "", options: .regularExpression)
-            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "&nbsp;", with: " ")
-            .replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&lt;", with: "<")
-            .replacingOccurrences(of: "&gt;", with: ">")
-            .replacingOccurrences(of: "&quot;", with: "\"")
-            .replacingOccurrences(of: "&#39;", with: "'")
-
-        // collapse whitespace
-        text = text.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-        return text.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func oneLineSummary(from html: String, limit: Int = 140) -> String {
-        let text = plainText(from: html).replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.count <= limit { return text }
-        let idx = text.index(text.startIndex, offsetBy: limit)
-        var trimmed = String(text[..<idx])
-        if let lastSpace = trimmed.lastIndex(of: " ") { trimmed = String(trimmed[..<lastSpace]) }
-        return trimmed
-    }
-
-    private func sendNotification(for entry: FeedEntry) {
-        let content = UNMutableNotificationContent()
-        content.title = entry.title
-        let summary = oneLineSummary(from: entry.content)
-        content.body = summary.isEmpty ? (entry.sourceTitle ?? "Neuer Artikel verfügbar") : summary
-        content.sound = .default
-
-        let request = UNNotificationRequest(identifier: entry.link, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
-    }
 }

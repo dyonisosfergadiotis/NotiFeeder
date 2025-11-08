@@ -89,17 +89,18 @@ struct BookmarksView: View {
                         Button {
                             store.setRead(!isRead, articleID: entry.link)
                         } label: {
-                            Label(isRead ? "Als ungelesen" : "Als gelesen",
-                                  systemImage: isRead ? "xmark" : "checkmark")
+                            Image(systemName: isRead ? "circle.dashed" : "checkmark.circle")
                         }
+                        .accessibilityLabel(isRead ? "Als ungelesen markieren" : "Als gelesen markieren")
                         .tint(isRead ? .orange : theme.uiAccentColor)
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
                             BookmarkService.removeBookmark(link: entry.link, context: context)
                         } label: {
-                            Label("Lesezeichen entfernen", systemImage: "bookmark.slash")
+                            Image(systemName: "bookmark.slash")
                         }
+                        .accessibilityLabel("Lesezeichen entfernen")
                     }
                 }
                     .listStyle(.plain)

@@ -81,49 +81,12 @@ struct SearchView: View {
                         .padding(.horizontal, 24)
                 } else {
                     List(displayedResults) { result in
-                        let feedColor = theme.color(for: result.feedURL)
-                        let isRead = store.isRead(articleID: result.link)
-                        let isBookmarked = bookmarkedLinks.contains(result.link)
-                        Button {
-                            path.append(result.feedEntry)
-                        } label: {
-                            ArticleCardView(
-                                feedTitle: result.feedTitle,
-                                feedColor: feedColor,
-                                title: result.title,
-                                summary: result.summary,
-                                isRead: isRead,
-                                date: result.publishedAt,
-                                isBookmarked: isBookmarked
-                            )
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                            Button {
-                                toggleReadState(for: result.link, currentlyRead: isRead)
-                            } label: {
-                                Label(isRead ? "Als ungelesen" : "Als gelesen",
-                                      systemImage: isRead ? "xmark" : "checkmark")
-                            }
-                            .tint(isRead ? .orange : theme.uiAccentColor)
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button {
-                                toggleBookmark(for: result.feedEntry, currentlyBookmarked: isBookmarked)
-                            } label: {
-                                Label(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen",
-                                      systemImage: isBookmarked ? "bookmark.slash" : "bookmark")
-                            }
-                            .tint(isBookmarked ? .red : theme.uiAccentColor)
-                        }
+                        resultRow(for: result)
                     }
                     .scrollContentBackground(.hidden)
                     .background(Color(.systemGroupedBackground))
                     .listStyle(.plain)
+                    .listRowSpacing(6)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -160,6 +123,53 @@ struct SearchView: View {
         }
         .onReceive(store.$readArticleIDs) { _ in
             rebuildSnapshot()
+        }
+    }
+
+    @ViewBuilder
+    private func resultRow(for result: ArticleSearchResult) -> some View {
+        let feedColor = theme.color(for: result.feedURL)
+        let accentColor = theme.uiAccentColor
+        let isRead = store.isRead(articleID: result.link)
+        let isBookmarked = bookmarkedLinks.contains(result.link)
+
+        Button {
+            path.append(result.feedEntry)
+        } label: {
+            ArticleCardView(
+                feedTitle: result.feedTitle,
+                feedColor: feedColor,
+                title: result.title,
+                summary: result.summary,
+                isRead: isRead,
+                date: result.publishedAt,
+                isBookmarked: isBookmarked,
+                highlightTerm: searchText,
+                highlightColor: feedColor
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            Button {
+                toggleReadState(for: result.link, currentlyRead: isRead)
+            } label: {
+                Image(systemName: isRead ? "circle.dashed" : "checkmark.circle")
+            }
+            .accessibilityLabel(isRead ? "Als ungelesen markieren" : "Als gelesen markieren")
+            .tint(isRead ? .orange : accentColor)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button {
+                toggleBookmark(for: result.feedEntry, currentlyBookmarked: isBookmarked)
+            } label: {
+                Image(systemName: isBookmarked ? "bookmark.slash" : "bookmark")
+            }
+            .accessibilityLabel(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen")
+            .tint(isBookmarked ? .red : accentColor)
         }
     }
 

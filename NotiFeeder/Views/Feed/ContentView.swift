@@ -51,6 +51,7 @@ struct FeedListView: View {
     @EnvironmentObject private var store: ArticleStore
     @EnvironmentObject private var theme: ThemeSettings
     @Environment(\.modelContext) private var modelContext
+    @AppStorage("cachedEntries") private var cachedEntriesData: Data = Data()
     @AppStorage("notificationFeedPreferences") private var notificationFeedPreferencesData: Data = Data()
     @AppStorage("notificationsEnabledPreference") private var notificationsEnabledPreference: Bool = true
     
@@ -58,14 +59,16 @@ struct FeedListView: View {
     @State private var isLoading = false
     @State private var sortOption = "Neueste zuerst"
     @State private var showReadEntries = false
-    @State private var hasLoadedOnce = false
+    @State private var didTriggerInitialLoad = false
     @State private var path: [FeedEntry] = []
+    @State private var didRestoreCachedEntries = false
 
     @State private var refreshTask: Task<Void, Never>? = nil
     @State private var lastRefreshDate: Date? = nil
     @State private var bookmarkedLinks: Set<String> = []
-    
+
     var sortOptions = ["Neueste zuerst", "Älteste zuerst", "Alphabetisch"]
+    private let maxArticlesPerFeed = 100
     private var sortIconName: String {
         switch sortOption {
         case "Neueste zuerst":
@@ -122,15 +125,17 @@ struct FeedListView: View {
                             Button {
                                 markAsUnread(entry)
                             } label: {
-                                Label("Als ungelesen", systemImage: "xmark")
+                                Image(systemName: "circle.dashed")
                             }
+                            .accessibilityLabel("Als ungelesen markieren")
                             .tint(.orange)
                         } else {
                             Button {
                                 markAsRead(entry)
                             } label: {
-                                Label("Als gelesen", systemImage: "checkmark")
+                                Image(systemName: "checkmark.circle")
                             }
+                            .accessibilityLabel("Als gelesen markieren")
                             .tint(theme.uiAccentColor)
                         }
                     }
@@ -138,9 +143,9 @@ struct FeedListView: View {
                         Button {
                             toggleBookmark(for: detailEntry, isCurrentlyBookmarked: isBookmarked)
                         } label: {
-                            Label(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen",
-                                  systemImage: isBookmarked ? "bookmark.slash" : "bookmark")
+                            Image(systemName: isBookmarked ? "bookmark.slash" : "bookmark")
                         }
+                        .accessibilityLabel(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen")
                         .tint(isBookmarked ? .red : theme.uiAccentColor)
                     }
                 }
@@ -214,12 +219,11 @@ struct FeedListView: View {
             }
         }
         .onAppear {
-            if !hasLoadedOnce {
-                hasLoadedOnce = true
-                Task {
-                    await loadRSSFeed()
-                }
+            if !didRestoreCachedEntries {
+                didRestoreCachedEntries = true
+                restoreCachedEntries()
             }
+            triggerInitialLoadIfPossible()
             Task { @MainActor in
                 refreshBookmarkedLinks()
             }
@@ -228,6 +232,9 @@ struct FeedListView: View {
             withAnimation(.easeInOut(duration: 0.2)) {
                 applySorting()
             }
+        }
+        .onChange(of: feeds) { _ in
+            triggerInitialLoadIfPossible()
         }
         .onChange(of: showReadEntries) { _ in
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -243,6 +250,15 @@ struct FeedListView: View {
                         scene.windows.first?.rootViewController?.setNeedsStatusBarAppearanceUpdate()
                     }
             }
+        }
+    }
+
+    private func triggerInitialLoadIfPossible() {
+        guard !didTriggerInitialLoad else { return }
+        guard !feeds.isEmpty else { return }
+        didTriggerInitialLoad = true
+        Task {
+            await loadRSSFeed()
         }
     }
     
@@ -266,7 +282,6 @@ extension FeedListView {
     func loadRSSFeed() async {
         isLoading = true
 
-        let existingLinksBefore = Set(entries.map { $0.link })
         var feedURLByLink: [String: String] = [:]
 
         let feedsSnapshot = feeds
@@ -281,8 +296,19 @@ extension FeedListView {
             }
 
             for await (feed, result) in group {
-                if !result.isEmpty {
-                    let storedArticles = result.map { entry in
+                let enrichedEntries: [FeedEntry] = result.map { entry in
+                    var enriched = entry
+                    if enriched.sourceTitle == nil {
+                        enriched.sourceTitle = feed.title
+                    }
+                    if enriched.feedURL == nil {
+                        enriched.feedURL = feed.url
+                    }
+                    return enriched
+                }
+
+                if !enrichedEntries.isEmpty {
+                    let storedArticles = enrichedEntries.map { entry in
                         StoredFeedArticle(
                             title: entry.title,
                             link: entry.link,
@@ -294,11 +320,11 @@ extension FeedListView {
                     store.mergeArticles(storedArticles, for: feed.url)
                 }
 
-                for entry in result {
-                    feedURLByLink[entry.link] = feed.url
+                for entry in enrichedEntries {
+                    feedURLByLink[entry.link] = entry.feedURL ?? feed.url
                 }
 
-                newEntries.append(contentsOf: result)
+                newEntries.append(contentsOf: enrichedEntries)
             }
         }
 
@@ -311,6 +337,8 @@ extension FeedListView {
                     existing.imageURL = newEntry.imageURL
                     existing.author = newEntry.author
                     existing.pubDateString = newEntry.pubDateString
+                    existing.feedURL = newEntry.feedURL ?? existing.feedURL
+                    existing.sourceTitle = newEntry.sourceTitle ?? existing.sourceTitle
                     entries[existingIndex] = existing
                     entries[existingIndex].isRead = store.isRead(articleID: entries[existingIndex].link)
                 } else {
@@ -319,35 +347,34 @@ extension FeedListView {
                     entries.append(fresh)
                 }
             }
-
-            entries.removeAll { oldEntry in
-                !newEntries.contains(where: { $0.link == oldEntry.link })
-            }
-
-            applySorting()
         }
 
-        let newUnique = newEntries.filter { !existingLinksBefore.contains($0.link) }
+        enforceArticleLimit(feedURLByLink: feedURLByLink)
+        persistEntriesCache()
+
+        let hadTrackedEntries = NotificationDeliveryTracker.hasTrackedArticles()
+        let brandNewEntries = NotificationDeliveryTracker.markAndReturnNew(entries: newEntries)
         let enabledFeeds = enabledNotificationFeedURLs()
-        let eligibleEntries = newUnique.filter { entry in
+        let feedsByURL = Dictionary(uniqueKeysWithValues: feeds.map { ($0.url, $0) })
+        let eligibleEntries = brandNewEntries.filter { entry in
             guard !enabledFeeds.isEmpty else { return false }
             let feedURL = feedURLByLink[entry.link] ?? feedSource(for: entry)?.url
             guard let feedURL else { return true }
             return enabledFeeds.contains(feedURL)
         }
-        let newUnreadCount = eligibleEntries.filter { !$0.isRead }.count
-        if notificationsEnabledPreference && newUnreadCount > 0 {
+
+        if notificationsEnabledPreference && hadTrackedEntries && !eligibleEntries.isEmpty {
+            let entriesToNotify = eligibleEntries
             NotificationScheduler.shared.requestAuthorizationIfNeeded { granted in
                 guard granted else { return }
-                let feedURLs = Set(eligibleEntries.compactMap { feedURLByLink[$0.link] ?? feedSource(for: $0)?.url })
-                let feedTitle: String?
-                if feedURLs.count == 1, let onlyURL = feedURLs.first,
-                   let match = feeds.first(where: { $0.url == onlyURL }) {
-                    feedTitle = match.title
-                } else {
-                    feedTitle = nil
+                for entry in entriesToNotify {
+                    let feedURL = feedURLByLink[entry.link] ?? feedSource(for: entry)?.url
+                    let feedTitle = feedURL.flatMap { feedsByURL[$0]?.title } ?? feedSource(for: entry)?.title
+                    var enrichedEntry = entry
+                    enrichedEntry.sourceTitle = feedTitle
+                    enrichedEntry.feedURL = feedURL
+                    NotificationScheduler.shared.scheduleArticleNotification(for: enrichedEntry, feedTitle: feedTitle)
                 }
-                NotificationScheduler.shared.scheduleNewArticlesNotification(count: newUnreadCount, feedTitle: feedTitle)
             }
         }
 
@@ -403,6 +430,58 @@ extension FeedListView {
         }
     }
 
+    private func enforceArticleLimit(feedURLByLink: [String: String]) {
+        guard maxArticlesPerFeed > 0 else {
+            applySorting()
+            return
+        }
+
+        var grouped: [String: [FeedEntry]] = [:]
+        for entry in entries {
+            let feedURL = entry.feedURL
+                ?? feedURLByLink[entry.link]
+                ?? feedSource(for: entry)?.url
+                ?? entry.link
+            grouped[feedURL, default: []].append(entry)
+        }
+
+        var trimmed: [FeedEntry] = []
+        for (_, items) in grouped {
+            let sorted = items.sorted { entryDate(for: $0) > entryDate(for: $1) }
+            trimmed.append(contentsOf: sorted.prefix(maxArticlesPerFeed))
+        }
+
+        entries = trimmed
+        applySorting()
+    }
+
+    private func entryDate(for entry: FeedEntry) -> Date {
+        entry.pubDateString
+            .flatMap { DateFormatter.rfc822.date(from: $0) }
+            ?? Date.distantPast
+    }
+
+    private func persistEntriesCache() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(entries) {
+            cachedEntriesData = data
+        }
+    }
+
+    private func restoreCachedEntries() {
+        guard !cachedEntriesData.isEmpty else { return }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if var cached = try? decoder.decode([FeedEntry].self, from: cachedEntriesData) {
+            for index in cached.indices {
+                cached[index].isRead = store.isRead(articleID: cached[index].link)
+            }
+            entries = cached
+            enforceArticleLimit(feedURLByLink: [:])
+        }
+    }
+
     var filteredEntries: [FeedEntry] {
         showReadEntries ? entries : entries.filter { !$0.isRead }
     }
@@ -422,6 +501,7 @@ extension FeedListView {
                     }
                 }
             }
+            persistEntriesCache()
         }
     }
 
@@ -431,6 +511,7 @@ extension FeedListView {
                 entries[index].isRead = false
             }
             store.setRead(false, articleID: entry.link)
+            persistEntriesCache()
         }
     }
     

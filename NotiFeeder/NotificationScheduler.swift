@@ -33,19 +33,48 @@ final class NotificationScheduler {
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
 
-    func scheduleNewArticlesNotification(count: Int, feedTitle: String? = nil) {
-        guard count > 0 else { return }
+    func scheduleArticleNotification(for entry: FeedEntry, feedTitle: String? = nil) {
         let content = UNMutableNotificationContent()
+        content.title = entry.title
         if let feedTitle, !feedTitle.isEmpty {
-            content.title = "Neue Artikel in \(feedTitle)"
-        } else {
-            content.title = "Neue Artikel verfügbar"
+            content.subtitle = feedTitle
         }
-        content.body = count == 1 ? "1 neuer Artikel" : "\(count) neue Artikel"
+        content.body = bodySummary(for: entry)
+        content.userInfo = ["link": entry.link]
         content.sound = .default
 
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1.5, repeats: false)
-        let request = UNNotificationRequest(identifier: "notifeeder.new.articles.summary", content: content, trigger: trigger)
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1.0, repeats: false)
+        let request = UNNotificationRequest(identifier: entry.link, content: content, trigger: trigger)
         UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    private func bodySummary(for entry: FeedEntry) -> String {
+        let stripped = HTMLText.stripHTML(entry.content)
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if !stripped.isEmpty {
+            return trimmed(stripped, limit: 160)
+        }
+
+        if let author = entry.author, !author.isEmpty {
+            return "Von \(author)"
+        }
+
+        if let feed = entry.sourceTitle, !feed.isEmpty {
+            return "Neuer Artikel auf \(feed)"
+        }
+
+        return "Neuer Artikel verfügbar"
+    }
+
+    private func trimmed(_ text: String, limit: Int) -> String {
+        guard text.count > limit else { return text }
+        let idx = text.index(text.startIndex, offsetBy: limit)
+        var candidate = String(text[..<idx])
+        if let lastSpace = candidate.lastIndex(of: " ") {
+            candidate = String(candidate[..<lastSpace])
+        }
+        return candidate.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 }

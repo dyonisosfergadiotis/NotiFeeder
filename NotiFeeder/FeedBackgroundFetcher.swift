@@ -30,7 +30,15 @@ final class FeedBackgroundFetcher {
         }
         let allEntries = flattenedEntries.map(\.1)
         let brandNewEntries = NotificationDeliveryTracker.markAndReturnNew(entries: allEntries)
-        guard !brandNewEntries.isEmpty else { return }
+        if brandNewEntries.isEmpty {
+            if NotificationPreferenceStore.notificationsEnabled() {
+                NotificationScheduler.shared.scheduleStatusNotification(
+                    title: "NotiFeeder",
+                    body: "Keine neuen Artikel gefunden."
+                )
+            }
+            return
+        }
 
         let newIDs = Set(brandNewEntries.map(\.link))
         let newPairs = flattenedEntries.filter { newIDs.contains($0.1.link) }

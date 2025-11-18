@@ -3,11 +3,13 @@ import BackgroundTasks
 import UserNotifications
 import SwiftData
 
+
 // Use the FeedSource defined in this target (no module qualifier to avoid ambiguity)
 
 @main
 struct NotiFeederApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var theme = ThemeSettings()
 
     var body: some Scene {

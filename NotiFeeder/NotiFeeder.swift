@@ -1,4 +1,5 @@
 import SwiftUI
+import FirebaseCore
 
 /// Wrap your root view with this to inject shared environment objects and enable background refresh
 struct AppRoot<Content: View>: View {

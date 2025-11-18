@@ -84,8 +84,18 @@ struct FeedDetailView: View {
             .transition(.opacity.combined(with: .move(edge: .trailing)))
             .animation(.smooth(duration: 0.22), value: entry.id)
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        toggleBookmark()
+                    } label: {
+                        Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
+                            .font(.system(size: 18, weight: .regular))
+                            .contentShape(Rectangle())
+                    }
+                    .tint(feedColor ?? theme.uiAccentColor)
+                }
                 ToolbarItemGroup(placement: .bottomBar) {
-                    HStack(spacing: 28) {
+                    HStack(spacing: 12) {
                         Button {
                             if let url = URL(string: entry.link) {
                                 UIApplication.shared.open(url)
@@ -94,6 +104,7 @@ struct FeedDetailView: View {
                             Image(systemName: "safari")
                         }
                         .tint(feedColor ?? theme.uiAccentColor)
+                        .frame(maxWidth: .infinity)
 
                         Button {
                             gatherShareContent()
@@ -101,6 +112,7 @@ struct FeedDetailView: View {
                             Image(systemName: "square.and.arrow.up")
                         }
                         .tint(feedColor ?? theme.uiAccentColor)
+                        .frame(maxWidth: .infinity)
 
                         Button {
                             let newValue = !isReadLocal
@@ -110,13 +122,7 @@ struct FeedDetailView: View {
                             Image(systemName: isReadLocal ? "checkmark.circle.fill" : "checkmark.circle")
                         }
                         .tint(feedColor ?? theme.uiAccentColor)
-
-                        Button {
-                            toggleBookmark()
-                        } label: {
-                            Image(systemName: isBookmarked ? "bookmark.fill" : "bookmark")
-                        }
-                        .tint(feedColor ?? theme.uiAccentColor)
+                        .frame(maxWidth: .infinity)
 
                         Button {
                             activeSheet = .readerSettings
@@ -124,6 +130,7 @@ struct FeedDetailView: View {
                             Image(systemName: "textformat.size")
                         }
                         .tint(feedColor ?? theme.uiAccentColor)
+                        .frame(maxWidth: .infinity)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 20)
@@ -143,6 +150,7 @@ struct FeedDetailView: View {
                     isBookmarked = isCurrentlyBookmarked()
                 }
             }
+            // Reader settings panel has no separate preview; article content acts as live preview
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
                 case .share(let payload, _):
@@ -235,10 +243,12 @@ struct FeedDetailView: View {
     }
 
     private func composeShareText(selectedSnippet: String?) -> String {
-        var parts: [String] = [entry.title, entry.link]
+        var parts: [String] = []
+        parts.append(entry.title)
         if let snippet = selectedSnippet, !snippet.isEmpty {
             parts.append(snippet)
         }
+        parts.append(entry.link)
         return parts.joined(separator: "\n\n")
     }
 
@@ -288,6 +298,8 @@ struct ActivityView: UIViewControllerRepresentable {
 }
 
 #Preview {
-    FeedDetailView(entry: FeedEntry(title: "test",link: "http:abc.de",content: "test",imageURL: nil,author: "mama",pubDateString: nil,isRead: false))
+    FeedDetailView(entry: FeedEntry(title: "test",link: "http:abc.de",content: "test",imageURL: nil,author: "mama",pubDateString: "15.11.25",isRead: false))
+        .environmentObject(ThemeSettings())
+        .environmentObject(ArticleStore.shared)
 }
  

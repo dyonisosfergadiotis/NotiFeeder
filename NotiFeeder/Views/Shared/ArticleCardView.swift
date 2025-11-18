@@ -51,48 +51,52 @@ struct ArticleCardView: View {
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text(feedTitle)
-                        .appSectionLabel()
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(feedColor.opacity(isRead ? 0.22 : 0.4), in: Capsule())
-                        .foregroundStyle(Color.white.opacity(0.95))
+            HStack(spacing: 0) {
 
-                    Spacer()
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(feedTitle)
+                            .appSectionLabel()
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(pillBackground, in: Capsule())
+                            .foregroundStyle(Color.white.opacity(0.95))
 
-                    HStack(spacing: 6) {
-                        if isBookmarked {
-                            Image(systemName: "bookmark.fill")
-                                .font(.caption)
-                                .foregroundColor(feedColor)
-                        }
-                        if let formattedDate {
-                            Text(formattedDate)
-                                .appMeta()
-                                .foregroundStyle(.secondary)
+                        Spacer()
+
+                        HStack(spacing: 6) {
+                            if isBookmarked {
+                                Image(systemName: "bookmark.fill")
+                                    .font(.caption)
+                                    .foregroundColor(feedColor)
+                            }
+                            if let formattedDate {
+                                Text(formattedDate)
+                                    .appMeta()
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
-                }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    highlightableText(for: title, baseColor: titleColor)
-                        .appTitle()
+                    VStack(alignment: .leading, spacing: 8) {
+                        highlightableText(for: title, baseColor: titleColor)
+                            .appTitle()
 
-                    if hasSummary, let summary {
-                        highlightableText(for: summary, baseColor: summaryColor)
-                            .appSecondary()
-                            .lineLimit(3)
+                        if hasSummary, let summary {
+                            highlightableText(for: summary, baseColor: summaryColor)
+                                .appSecondary()
+                                .lineLimit(3)
+                        }
                     }
+                    .padding(.leading, 10)
                 }
-                .padding(.leading, 10)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color(.secondarySystemGroupedBackground))
+                    .fill(cardBackground)
+                    //.strokeBorder(Color.primary.opacity(0.06), lineWidth: 1).clipped()
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
@@ -112,45 +116,42 @@ struct ArticleCardView: View {
     }
 
     private var titleColor: Color {
-        isRead ? Color.primary.opacity(0.65) : Color.primary
+        isRead ? Color.secondary : Color.primary
     }
 
     private var summaryColor: Color {
-        isRead ? Color.secondary.opacity(0.85) : Color.primary.opacity(0.75)
+        isRead ? Color.secondary.opacity(0.75) : Color.primary.opacity(0.75)
+    }
+
+    private var cardBackground: Color {
+        isRead ? Color(feedColor).opacity(0.15) : Color(feedColor).opacity(0.5)
+    }
+    
+    private var pillBackground: Color {
+        isRead ? Color(feedColor).opacity(0.5) : Color("#E5E5E7")
     }
 
     private func highlightableText(for content: String, baseColor: Color) -> Text {
+        var attributed = AttributedString(content)
+        attributed.foregroundColor = baseColor
+
         let tokens = normalizedHighlightTokens
         guard !tokens.isEmpty else {
-            return Text(content).foregroundColor(baseColor)
+            return Text(attributed)
         }
 
         let ranges = mergedHighlightRanges(in: content, tokens: tokens)
         guard !ranges.isEmpty else {
-            return Text(content).foregroundColor(baseColor)
+            return Text(attributed)
         }
-
-        var builder = Text("")
-        var currentIndex = content.startIndex
 
         for range in ranges {
-            if currentIndex < range.lowerBound {
-                let prefix = String(content[currentIndex..<range.lowerBound])
-                builder = builder + Text(prefix).foregroundColor(baseColor)
+            if let attrRange = Range(range, in: attributed) {
+                attributed[attrRange].foregroundColor = highlightColor
             }
-            let highlightSegment = String(content[range])
-            builder = builder + Text(highlightSegment)
-                .foregroundColor(highlightColor)
-                .fontWeight(.semibold)
-            currentIndex = range.upperBound
         }
 
-        if currentIndex < content.endIndex {
-            let suffix = String(content[currentIndex..<content.endIndex])
-            builder = builder + Text(suffix).foregroundColor(baseColor)
-        }
-
-        return builder
+        return Text(attributed)
     }
 
     private func mergedHighlightRanges(in content: String, tokens: [String]) -> [Range<String.Index>] {

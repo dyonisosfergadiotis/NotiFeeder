@@ -28,12 +28,27 @@ struct SearchView: View {
     private var feedSourceMap: [String: FeedSource] {
         Dictionary(uniqueKeysWithValues: feeds.map { ($0.url, $0) })
     }
+    
+    // Set of currently enabled feed URLs for fast lookup
+    private var currentFeedURLSet: Set<String> {
+        Set(feeds.map { $0.url })
+    }
 
     private var displayedResults: [ArticleSearchResult] {
-        let sorted = snapshotResults.sorted { ($0.publishedAt ?? .distantPast) > ($1.publishedAt ?? .distantPast) }
+        // Filter out results whose feeds are no longer present, unless the article is bookmarked
+        let filteredByFeedOrBookmark = snapshotResults.filter { result in
+            currentFeedURLSet.contains(result.feedURL) || bookmarkedLinks.contains(result.link)
+        }
+        // Apply search text filtering
         let term = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !term.isEmpty else { return sorted }
-        return sorted.filter { $0.matches(searchTerm: term) }
+        let afterSearchFilter: [ArticleSearchResult]
+        if term.isEmpty {
+            afterSearchFilter = filteredByFeedOrBookmark
+        } else {
+            afterSearchFilter = filteredByFeedOrBookmark.filter { $0.matches(searchTerm: term) }
+        }
+        // Sort by published date descending (newest first)
+        return afterSearchFilter.sorted { ($0.publishedAt ?? .distantPast) > ($1.publishedAt ?? .distantPast) }
     }
 
     private func rebuildSnapshot() {
@@ -110,10 +125,10 @@ struct SearchView: View {
             rebuildSnapshot()
             refreshBookmarksCache()
         }
-        .onChange(of: feeds) { _ in
+        .onChange(of: feeds) { _, _ in
             rebuildSnapshot()
         }
-        .onChange(of: savedFeedsData) { newData in
+        .onChange(of: savedFeedsData) { newData, _ in
             if let decodedFeeds = try? JSONDecoder().decode([FeedSource].self, from: newData) {
                 feeds = decodedFeeds
             } else {
@@ -129,7 +144,6 @@ struct SearchView: View {
     @ViewBuilder
     private func resultRow(for result: ArticleSearchResult) -> some View {
         let feedColor = theme.color(for: result.feedURL)
-        let accentColor = theme.uiAccentColor
         let isRead = store.isRead(articleID: result.link)
         let isBookmarked = bookmarkedLinks.contains(result.link)
 
@@ -160,7 +174,7 @@ struct SearchView: View {
                 Image(systemName: isRead ? "circle.dashed" : "checkmark.circle")
             }
             .accessibilityLabel(isRead ? "Als ungelesen markieren" : "Als gelesen markieren")
-            .tint(isRead ? .orange : accentColor)
+            .tint(theme.uiAccentColor)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button {
@@ -169,7 +183,7 @@ struct SearchView: View {
                 Image(systemName: isBookmarked ? "bookmark.slash" : "bookmark")
             }
             .accessibilityLabel(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen")
-            .tint(isBookmarked ? .red : accentColor)
+            .tint(isBookmarked ? .red : theme.uiAccentColor)
         }
     }
 

@@ -79,11 +79,11 @@ struct SettingsView: View {
             refreshNotificationSettings()
             loadNotificationPreferences()
         }
-        .onChange(of: feeds) { _ in
+        .onChange(of: feeds) { _, _ in
             pruneNotificationPreferences()
             saveNotificationPreferences()
         }
-        .onChange(of: notificationFeedPreferences) { _ in
+        .onChange(of: notificationFeedPreferences) { _, _ in
             saveNotificationPreferences()
         }
     }
@@ -436,7 +436,7 @@ private struct NotificationFeedSelectionView: View {
                     Toggle("Benachrichtigungen senden", isOn: $notificationsEnabled)
                         .tint(accentColor)
                         .disabled(!systemAllowsNotifications)
-                        .onChange(of: notificationsEnabled) { newValue in
+                        .onChange(of: notificationsEnabled) { newValue, _ in
                             if !newValue {
                                 selectedFeeds = []
                             }
@@ -545,18 +545,20 @@ private struct SettingsSummaryCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Label {
-                    Text("Mach NotiFeeder zu deinem Feed")
+                    Text("Personalisiere deinen Feed")
                         .appTitle()
-                        .fontWeight(.semibold)
+                        .font(.system(size: 15, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 } icon: {
                     Image(systemName: "sparkles")
                         .symbolVariant(.fill)
-                        .font(.system(size: 24, weight: .medium))
+                        .font(.system(size: 20, weight: .medium))
                 }
                 .foregroundStyle(Color(.systemBackground))
-            }
+            //}
                 Spacer()
-            HStack {
+          // HStack {
                 Button {
                     onClose()
                 } label: {

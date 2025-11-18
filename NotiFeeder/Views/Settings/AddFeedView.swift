@@ -46,7 +46,9 @@ struct AddFeedView: View {
                                 .accessibilityLabel(option.name)
                             }
                         }
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 10)
+                        .padding(.leading, 8)
+                        .padding(.trailing, 8)
                     }
                 }
             }
@@ -79,3 +81,7 @@ struct AddFeedView: View {
     }
 }
 
+#Preview {
+        AddFeedView(onSave: { _, _ in })
+            .environmentObject(ThemeSettings())
+}

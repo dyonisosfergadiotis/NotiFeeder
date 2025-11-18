@@ -57,6 +57,10 @@ final class ThemeSettings: ObservableObject {
     var uiAccentColor: Color {
         Color.fromHex(uiAccentHex)
     }
+    
+    var uiSwipeColor: Color {
+        Color.fromHex(uiAccentHex) //Color.fromHex(feedcolor)
+    }
 
     var uiAccentHexString: String {
         uiAccentHex

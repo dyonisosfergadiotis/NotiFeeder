@@ -9,6 +9,38 @@ import SwiftUI
 import SwiftData
 import Foundation
 
+private enum BookmarkSortOption: String, CaseIterable, Identifiable {
+    case addedNewest
+    case addedOldest
+    case releaseNewest
+    case releaseOldest
+
+    var id: String { rawValue }
+
+    var menuTitle: String {
+        switch self {
+        case .addedNewest: return "Neueste zuerst"
+        case .addedOldest: return "Älteste zuerst"
+        case .releaseNewest: return "Neueste zuerst"
+        case .releaseOldest: return "Älteste zuerst"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .addedNewest, .addedOldest: return "bookmark.circle"
+        case .releaseNewest, .releaseOldest: return "clock"
+        }
+    }
+
+    var isDescending: Bool {
+        switch self {
+        case .addedNewest, .releaseNewest: return true
+        case .addedOldest, .releaseOldest: return false
+        }
+    }
+}
+
 struct BookmarksView: View {
     @Environment(\.modelContext) private var context
     @EnvironmentObject private var store: ArticleStore
@@ -21,6 +53,23 @@ struct BookmarksView: View {
     @State private var feeds: [FeedSource] = []
     @State private var path: [FeedEntry] = []
 
+    @State private var sortOption: BookmarkSortOption = .addedNewest
+    private var sortedBookmarkedEntries: [FeedEntryModel] {
+        switch sortOption {
+        case .addedNewest:
+            return bookmarkedEntries.sorted { $0.date > $1.date }
+        case .addedOldest:
+            return bookmarkedEntries.sorted { $0.date < $1.date }
+        case .releaseNewest:
+            return bookmarkedEntries.sorted { releaseDate(for: $0) > releaseDate(for: $1) }
+        case .releaseOldest:
+            return bookmarkedEntries.sorted { releaseDate(for: $0) < releaseDate(for: $1) }
+        }
+    }
+    private var sortIconName: String {
+        sortOption.iconName
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             Group {
@@ -32,17 +81,16 @@ struct BookmarksView: View {
                         Text("Keine Lesezeichen gespeichert")
                             .font(.headline)
                             .foregroundStyle(theme.uiAccentColor)
-                            .navigationTitle("Lesezeichen")
                         Text("Markierte Artikel werden hier angezeigt")
                             .font(.subheadline)
                             .foregroundStyle(Color(.tertiaryLabel))
                             .multilineTextAlignment(.center)
-                    }.padding(.vertical, 32)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        
+                    }
+                    .padding(.vertical, 32)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
                 } else {
-                    List(bookmarkedEntries) { entry in
+                    List(sortedBookmarkedEntries) { entry in
                         let feedEntry = FeedEntry(
                             title: entry.title,
                             link: entry.link,
@@ -81,32 +129,56 @@ struct BookmarksView: View {
                             )
                             .contentShape(Rectangle())
                         }
-                    .buttonStyle(.plain)
-                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                    .listRowSeparator(.hidden)
-                    .listRowBackground(Color.clear)
-                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        Button {
-                            store.setRead(!isRead, articleID: entry.link)
-                        } label: {
-                            Image(systemName: isRead ? "circle.dashed" : "checkmark.circle")
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button {
+                                store.setRead(!isRead, articleID: entry.link)
+                            } label: {
+                                Image(systemName: isRead ? "circle.dashed" : "checkmark.circle")
+                            }
+                            .accessibilityLabel(isRead ? "Als ungelesen markieren" : "Als gelesen markieren")
+                            .tint(theme.uiAccentColor)
                         }
-                        .accessibilityLabel(isRead ? "Als ungelesen markieren" : "Als gelesen markieren")
-                        .tint(isRead ? .orange : theme.uiAccentColor)
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button(role: .destructive) {
-                            BookmarkService.removeBookmark(link: entry.link, context: context)
-                        } label: {
-                            Image(systemName: "bookmark.slash")
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                BookmarkService.removeBookmark(link: entry.link, context: context)
+                            } label: {
+                                Image(systemName: "bookmark.slash")
+                            }
+                            .accessibilityLabel("Lesezeichen entfernen")
+                            .tint(.red)
                         }
-                        .accessibilityLabel("Lesezeichen entfernen")
                     }
-                }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
                     .background(Color(.systemGroupedBackground))
-                    .navigationTitle("Lesezeichen")
+                }
+            }
+            .navigationTitle("Lesezeichen")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Text("Hinzugefügt")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        sortButton(for: .addedNewest)
+                        sortButton(for: .addedOldest)
+
+                        Divider()
+
+                        Text("Veröffentlicht")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        sortButton(for: .releaseNewest)
+                        sortButton(for: .releaseOldest)
+                    } label: {
+                        Label(sortOption.menuTitle, systemImage: sortIconName)
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .tint(theme.uiAccentColor)
                 }
             }
             .navigationDestination(for: FeedEntry.self) { entry in
@@ -115,7 +187,7 @@ struct BookmarksView: View {
             }
         }
         .onAppear(perform: loadFeeds)
-        .onChange(of: savedFeedsData) { _ in
+        .onChange(of: savedFeedsData) { _, _ in
             loadFeeds()
         }
     }
@@ -147,6 +219,29 @@ private extension BookmarksView {
         return feeds.first { $0.title == entry.sourceTitle }
     }
 
+    func releaseDate(for entry: FeedEntryModel) -> Date {
+        if let pub = entry.pubDateString,
+           let parsed = DateFormatter.rfc822.date(from: pub) {
+            return parsed
+        }
+        return entry.date
+    }
+
+    func sortButton(for option: BookmarkSortOption) -> some View {
+        Button {
+            sortOption = option
+        } label: {
+            HStack {
+                Label(option.menuTitle, systemImage: option.iconName)
+                if sortOption == option {
+                    Spacer()
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(theme.uiAccentColor)
+                }
+            }
+        }
+    }
+
     func baseDomain(from host: String?) -> String? {
         guard var h = host?.lowercased() else { return nil }
         let prefixes = ["www.", "feeds.", "feed.", "rss."]
@@ -164,3 +259,4 @@ private extension BookmarksView {
         }
     }
 }
+

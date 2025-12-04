@@ -1,7 +1,6 @@
 import Foundation
 import BackgroundTasks
 import SwiftUI
-import UserNotifications
 
 final class BackgroundRefreshManager {
     static let shared = BackgroundRefreshManager()
@@ -41,7 +40,6 @@ final class BackgroundRefreshManager {
         // Replace this block with your real refresh logic (fetch feeds, update store, schedule local notifications as needed)
         let refreshOp = BlockOperation {
             // TODO: Perform your background fetch/update here
-            self.scheduleTestNotification()
             Thread.sleep(forTimeInterval: 2) // simulate work
         }
 
@@ -72,19 +70,6 @@ struct BackgroundRefreshSetupModifier: ViewModifier {
 extension View {
     func enableBackgroundRefresh() -> some View {
         modifier(BackgroundRefreshSetupModifier())
-    }
-}
-
-private extension BackgroundRefreshManager {
-    func scheduleTestNotification() {
-        let center = UNUserNotificationCenter.current()
-        let content = UNMutableNotificationContent()
-        content.title = "NotiFeeder"
-        content.body = "Hintergrundaktualisierung abgeschlossen."
-        content.sound = .default
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: trigger)
-        center.add(request, withCompletionHandler: nil)
     }
 }
 

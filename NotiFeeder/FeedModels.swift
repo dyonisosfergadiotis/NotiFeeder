@@ -4,6 +4,13 @@ public struct FeedSource: Codable, Hashable, Identifiable {
     public var id: String { url }
     public var title: String
     public var url: String
+    
+    public var faviconURL: URL? {
+        guard let urlComponents = URL(string: url) else { return nil }
+        guard let scheme = urlComponents.scheme, let host = urlComponents.host else { return nil }
+        return URL(string: "\(scheme)://\(host)/favicon.ico")
+    }
+
 
     public init(title: String, url: String) {
         self.title = title

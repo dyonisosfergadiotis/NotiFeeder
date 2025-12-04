@@ -31,31 +31,13 @@ final class FeedBackgroundFetcher {
         let allEntries = flattenedEntries.map(\.1)
         let brandNewEntries = NotificationDeliveryTracker.markAndReturnNew(entries: allEntries)
         if brandNewEntries.isEmpty {
-            if NotificationPreferenceStore.notificationsEnabled() {
-                NotificationScheduler.shared.scheduleStatusNotification(
-                    title: "NotiFeeder",
-                    body: "Keine neuen Artikel gefunden."
-                )
-            }
             return
         }
 
         let newIDs = Set(brandNewEntries.map(\.link))
         let newPairs = flattenedEntries.filter { newIDs.contains($0.1.link) }
 
-        guard NotificationPreferenceStore.notificationsEnabled() else { return }
-        let allowedFeeds = NotificationPreferenceStore.allowedFeedURLs(availableFeeds: feeds)
-        guard !allowedFeeds.isEmpty else { return }
-
-        let allowedPairs = newPairs.filter { allowedFeeds.contains($0.0.url) }
-        guard !allowedPairs.isEmpty else { return }
-
-        for (feed, entry) in allowedPairs {
-            var enrichedEntry = entry
-            enrichedEntry.sourceTitle = feed.title
-            enrichedEntry.feedURL = feed.url
-            NotificationScheduler.shared.scheduleArticleNotification(for: enrichedEntry, feedTitle: feed.title)
-        }
+        _ = newPairs
     }
 
     private func fetchFeed(_ feed: FeedSource) async -> [FeedEntry] {

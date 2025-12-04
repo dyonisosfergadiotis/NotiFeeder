@@ -52,8 +52,6 @@ struct FeedListView: View {
     @EnvironmentObject private var theme: ThemeSettings
     @Environment(\.modelContext) private var modelContext
     @AppStorage("cachedEntries") private var cachedEntriesData: Data = Data()
-    @AppStorage("notificationFeedPreferences") private var notificationFeedPreferencesData: Data = Data()
-    @AppStorage("notificationsEnabledPreference") private var notificationsEnabledPreference: Bool = true
     
     @State private var entries: [FeedEntry] = []
     @State private var isLoading = false
@@ -365,32 +363,6 @@ extension FeedListView {
         enforceArticleLimit(feedURLByLink: feedURLByLink)
         persistEntriesCache()
 
-        let hadTrackedEntries = NotificationDeliveryTracker.hasTrackedArticles()
-        let brandNewEntries = NotificationDeliveryTracker.markAndReturnNew(entries: newEntries)
-        let enabledFeeds = enabledNotificationFeedURLs()
-        let feedsByURL = Dictionary(uniqueKeysWithValues: feeds.map { ($0.url, $0) })
-        let eligibleEntries = brandNewEntries.filter { entry in
-            guard !enabledFeeds.isEmpty else { return false }
-            let feedURL = feedURLByLink[entry.link] ?? feedSource(for: entry)?.url
-            guard let feedURL else { return true }
-            return enabledFeeds.contains(feedURL)
-        }
-
-        if notificationsEnabledPreference && hadTrackedEntries && !eligibleEntries.isEmpty {
-            let entriesToNotify = eligibleEntries
-            NotificationScheduler.shared.requestAuthorizationIfNeeded { granted in
-                guard granted else { return }
-                for entry in entriesToNotify {
-                    let feedURL = feedURLByLink[entry.link] ?? feedSource(for: entry)?.url
-                    let feedTitle = feedURL.flatMap { feedsByURL[$0]?.title } ?? feedSource(for: entry)?.title
-                    var enrichedEntry = entry
-                    enrichedEntry.sourceTitle = feedTitle
-                    enrichedEntry.feedURL = feedURL
-                    NotificationScheduler.shared.scheduleArticleNotification(for: enrichedEntry, feedTitle: feedTitle)
-                }
-            }
-        }
-
         isLoading = false
         Task { @MainActor in
             refreshBookmarkedLinks()
@@ -585,10 +557,6 @@ extension FeedListView {
         } else {
             return h
         }
-    }
-    
-    private func enabledNotificationFeedURLs() -> Set<String> {
-        NotificationPreferenceStore.allowedFeedURLs(from: notificationFeedPreferencesData, availableFeeds: feeds)
     }
 }
 

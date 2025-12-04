@@ -1,6 +1,5 @@
 import SwiftUI
 import BackgroundTasks
-import UserNotifications
 import SwiftData
 
 
@@ -28,7 +27,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
 
         // Benachrichtigungserlaubnis
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
 
         // Background Task registrieren
         BGTaskScheduler.shared.register(forTaskWithIdentifier: "de.dyonisos.NotiFeeder.refresh", using: nil) { [self] task in
@@ -68,3 +66,4 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         return [FeedSource(title: "MacRumors", url: "https://feeds.macrumors.com/MacRumors-All")]
     }
 }
+

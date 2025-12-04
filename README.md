@@ -7,7 +7,6 @@ NotiFeeder is a native iOS/iPadOS app for managing arbitrary RSS feeds. It aggre
 - **Mehrere Feeds**: Nutzer:innen können beliebig viele RSS/Atom-Feeds hinterlegen, bearbeiten und entfernen.
 - **Artikelverwaltung**: Neue Meldungen werden gruppiert dargestellt, lassen sich sortieren (neueste / älteste / alphabetisch) und als gelesen/ungelesen markieren.
 - **Bookmarks & SwiftData**: Lieblingsartikel werden lokal via SwiftData gesichert und stehen in einem eigenen Tab bereit – inklusive Offline-Zugriff.
-- **Benachrichtigungen**: Für jeden neuen Artikel wird (bei aktivierten Berechtigungen) eine lokale Notification mit Titel & kurzem Inhalt versendet. Die Herkunfts-Feeds können in den Einstellungen gefiltert werden.
 - **Suche**: Eine durchsuchbare Übersicht aller geladenen Artikel, inklusive Hervorhebung der Suchbegriffe in Titel und Zusammenfassung.
 - **Hintergrundaktualisierung**: Über `BGAppRefreshTask` werden Feeds regelmäßig aktualisiert; neue Artikel werden auch im Hintergrund erkannt.
 - **Theming**: Jeder Feed kann eine eigene Farbe erhalten; das globale Farbschema richtet sich nach `ThemeSettings`.
@@ -16,7 +15,6 @@ NotiFeeder is a native iOS/iPadOS app for managing arbitrary RSS feeds. It aggre
 
 - Xcode 15.3 or newer (Swift 5.9, iOS 17 SDK – `IPHONEOS_DEPLOYMENT_TARGET = 17.0`).
 - An iOS/iPadOS 17 device or simulator.
-- Notifications must be enabled by the user if reminders are desired.
 
 ## Build & Run
 
@@ -28,12 +26,6 @@ NotiFeeder is a native iOS/iPadOS app for managing arbitrary RSS feeds. It aggre
    ```
 
 3. Select your target device/simulator and hit Run (`⌘R`). On first launch add or edit feeds in **Settings → Feeds**.
-
-### Notifications
-
-- `NotificationScheduler` requests permission at first launch.
-- Per-feed notification toggles live in **Settings → Notifications**.
-- Each incoming article triggers its own local notification that names the feed and shows a short excerpt.
 
 ### Background refresh
 

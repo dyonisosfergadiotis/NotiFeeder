@@ -105,13 +105,9 @@ private struct FeedsSection: View {
             ForEach(feeds) { feed in
                 HStack(spacing: 14) {
                     if let faviconURL = feed.faviconURL {
-                        AsyncImage(url: faviconURL) { image in
-                            image.resizable().scaledToFit()
-                        } placeholder: {
-                            Circle().fill(Color.gray.opacity(0.3))
-                        }
-                        .frame(width: 36, height: 36)
-                        .clipShape(Circle())
+                        FaviconImageView(url: faviconURL)
+                            .frame(width: 36, height: 36)
+                            .clipShape(Circle())
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(feed.title)
@@ -141,6 +137,87 @@ private struct FeedsSection: View {
             .tint(accentColor)
             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 12, trailing: 16))
         }
+    }
+}
+
+// MARK: - FaviconImageView mit dauerhaftem Caching und Aktualisierung
+private struct FaviconImageView: View {
+    let url: URL
+    @State private var image: Image? = nil
+    @State private var isLoading = false
+
+    var body: some View {
+        Group {
+            if let image = image {
+                image.resizable().scaledToFit()
+            } else {
+                Circle().fill(Color.gray.opacity(0.3))
+                    .onAppear {
+                        loadFavicon()
+                    }
+            }
+        }
+    }
+
+    private func loadFavicon() {
+        guard !isLoading else { return }
+        isLoading = true
+
+        let fileManager = FileManager.default
+        if let cachedURL = FaviconCacheHelper.cachedURL(for: url),
+           let attributes = try? fileManager.attributesOfItem(atPath: cachedURL.path),
+           let modificationDate = attributes[.modificationDate] as? Date {
+            // Optional: update icon if older than 24h
+            if Date().timeIntervalSince(modificationDate) < 24*60*60,
+               let uiImage = UIImage(contentsOfFile: cachedURL.path) {
+                image = Image(uiImage: uiImage)
+                return
+            }
+        }
+
+        Task {
+            if let uiImage = await FaviconCacheHelper.downloadAndCacheFavicon(from: url) {
+                await MainActor.run { image = Image(uiImage: uiImage) }
+            }
+        }
+    }
+}
+
+private enum FaviconCacheHelper {
+    static func cachedURL(for url: URL) -> URL? {
+        let fileURL = cacheURL(for: url)
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            return fileURL
+        }
+        return nil
+    }
+
+    static func cacheURL(for url: URL) -> URL {
+        let fileName = cacheFileName(for: url)
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return caches.appendingPathComponent(fileName)
+    }
+
+    static func cacheFileName(for url: URL) -> String {
+        // Use a hash of the url as filename for uniqueness
+        let base = url.absoluteString
+        let hash = String(base.hashValue)
+        let ext = (url.pathExtension.isEmpty ? "png" : url.pathExtension)
+        return "favicon_\(hash).\(ext)"
+    }
+
+    static func downloadAndCacheFavicon(from url: URL) async -> UIImage? {
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let image = UIImage(data: data) {
+                let fileURL = cacheURL(for: url)
+                try? data.write(to: fileURL)
+                return image
+            }
+        } catch {
+            // Ignore error, fallback to placeholder
+        }
+        return nil
     }
 }
 
@@ -205,7 +282,9 @@ private struct EditFeedView: View {
                                 .accessibilityLabel(option.name)
                             }
                         }
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 10)
+                        .padding(.leading, 8)
+                        .padding(.trailing, 8)
                     }
                 }
             }

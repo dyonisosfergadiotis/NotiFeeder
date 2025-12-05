@@ -1,8 +1,8 @@
 //
-//  SearchView.swift
-//  NotiFeeder
+//  SearchView.swift
+//  NotiFeeder
 //
-//  Created by Dyonisos Fergadiotis on 04.11.25.
+//  Created by Dyonisos Fergadiotis on 04.11.25.
 //
 
 import Foundation
@@ -69,6 +69,7 @@ struct SearchView: View {
     
     private func toggleReadState(for link: String, currentlyRead: Bool) {
         store.setRead(!currentlyRead, articleID: link)
+        // Erneutes Erstellen des Snapshots nach Lesezustandsänderung
         rebuildSnapshot()
     }
     
@@ -108,9 +109,8 @@ struct SearchView: View {
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("Suche")
             .navigationDestination(for: FeedEntry.self) { entry in
-                let color = theme.color(for: entry.sourceTitle.flatMap { title in
-                    feeds.first(where: { $0.title == title })?.url
-                })
+                let color = theme.color(for: entry.feedURL)
+                // Die FeedDetailView sollte jetzt den korrigierten DateParser verwenden
                 FeedDetailView(entry: entry, feedColor: color)
             }
         }
@@ -137,6 +137,7 @@ struct SearchView: View {
             refreshBookmarksCache()
         }
         .onReceive(store.$readArticleIDs) { _ in
+            // Rebuild, wenn sich die gelesenen Artikel ändern (wird durch toggleReadState ausgelöst)
             rebuildSnapshot()
         }
     }
@@ -144,7 +145,8 @@ struct SearchView: View {
     @ViewBuilder
     private func resultRow(for result: ArticleSearchResult) -> some View {
         let feedColor = theme.color(for: result.feedURL)
-        let isRead = store.isRead(articleID: result.link)
+        // isRead wird direkt aus ArticleSearchResult verwendet, das von store.isRead() initialisiert wurde.
+        let isRead = result.isRead
         let isBookmarked = bookmarkedLinks.contains(result.link)
 
         Button {
@@ -169,6 +171,7 @@ struct SearchView: View {
         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             Button {
+                // toggleReadState aktualisiert den Store und ruft rebuildSnapshot auf
                 toggleReadState(for: result.link, currentlyRead: isRead)
             } label: {
                 Image(systemName: isRead ? "circle.dashed" : "checkmark.circle")
@@ -238,7 +241,16 @@ private struct ArticleSearchResult: Identifiable {
     }
 
     var feedEntry: FeedEntry {
-        let dateString = publishedAt.map { DateFormatter.rfc822.string(from: $0) }
+        // KORREKTUR: Verwende ISO8601 für eine robuste String-Konvertierung des Datums
+        // Dies verhindert, dass rfc822 ein falsches Format (yyyy anstelle von yy) annimmt,
+        // wenn die Original-Datumsinformation verloren gegangen ist.
+        let isoFormatter: ISO8601DateFormatter = {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return formatter
+        }()
+        
+        let dateString = publishedAt.map { isoFormatter.string(from: $0) }
 
         return FeedEntry(
             title: title,
@@ -248,6 +260,7 @@ private struct ArticleSearchResult: Identifiable {
             author: nil,
             sourceTitle: feedTitle,
             feedURL: feedURL,
+            // Hier wird das Datum im robusten ISO8601-Format übergeben
             pubDateString: dateString,
             isRead: isRead
         )

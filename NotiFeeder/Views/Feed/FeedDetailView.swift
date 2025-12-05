@@ -55,8 +55,9 @@ struct FeedDetailView: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     if let dateString = entry.pubDateString {
-                        if let date = DateFormatter.rfc822.date(from: dateString) {
-                            Text(DateFormatter.localized.string(from: date))
+                        let parsed = DateParser.parse(dateString)
+                        if parsed != Date.distantPast {
+                            Text(DateFormatter.localized.string(from: parsed))
                                 .font(.footnote)
                                 .foregroundColor(.secondary)
                         } else {

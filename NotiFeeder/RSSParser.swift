@@ -30,10 +30,11 @@ class RSSParser: NSObject, XMLParserDelegate {
         guard var xmlString = String(data: data, encoding: .utf8) else { return [] }
 
         // Fehlerhafte Entities & offene Tags reparieren
-        xmlString = xmlString.replacingOccurrences(of: "&nbsp;", with: " ")
+        xmlString = xmlString.replacingOccurrences(of: "&nbsp;", with: "")
+        xmlString = xmlString.replacingOccurrences(of: "&(?!(amp|lt|gt|quot|apos|#\\d+);)", with: "&amp;", options: .regularExpression)
         xmlString = xmlString.replacingOccurrences(of: "&amp;", with: "&")
         xmlString = xmlString.replacingOccurrences(of: "&#(0|1|2|3|4|5|6|7|8|9)(0|1|2|3|4|5|6|7|8|9);", with: "", options: .regularExpression)
-        xmlString = xmlString.replacingOccurrences(of: "&(?!(amp|lt|gt|quot|apos|#\\d+);)", with: "&amp;", options: .regularExpression)
+        xmlString = xmlString.replacingOccurrences(of: "&[A-Za-z]+;", with: "", options: .regularExpression)
         xmlString = xmlString.replacingOccurrences(of: "<br>", with: "<br/>")
 
         // Neue Parser-Instanz mit bereinigten Daten

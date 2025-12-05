@@ -1,8 +1,8 @@
 //
-//  BookmarksView.swift
-//  NotiFeeder
+//  BookmarksView.swift
+//  NotiFeeder
 //
-//  Created by Dyonisos Fergadiotis on 04.11.25.
+//  Created by Dyonisos Fergadiotis on 04.11.25.
 //
 
 import SwiftUI
@@ -46,6 +46,8 @@ struct BookmarksView: View {
     @EnvironmentObject private var store: ArticleStore
     @Query(
         filter: #Predicate<FeedEntryModel> { $0.isBookmarked },
+        // Die initiale Abfrage sortiert nach dem Hinzufügedatum (date) in umgekehrter Reihenfolge,
+        // da dies der Standard-Sortieroption (.addedNewest) am nächsten kommt.
         sort: [SortDescriptor<FeedEntryModel>(\.date, order: .reverse)]
     ) var bookmarkedEntries: [FeedEntryModel]
     @EnvironmentObject private var theme: ThemeSettings
@@ -54,13 +56,17 @@ struct BookmarksView: View {
     @State private var path: [FeedEntry] = []
 
     @State private var sortOption: BookmarkSortOption = .addedNewest
+    
+    // Verwenden Sie eine sortierte Computed Property, die von der sortOption abhängt
     private var sortedBookmarkedEntries: [FeedEntryModel] {
         switch sortOption {
         case .addedNewest:
+            // .date ist das Hinzufügedatum in FeedEntryModel
             return bookmarkedEntries.sorted { $0.date > $1.date }
         case .addedOldest:
             return bookmarkedEntries.sorted { $0.date < $1.date }
         case .releaseNewest:
+            // Sortieren nach dem tatsächlichen Veröffentlichungsdatum
             return bookmarkedEntries.sorted { releaseDate(for: $0) > releaseDate(for: $1) }
         case .releaseOldest:
             return bookmarkedEntries.sorted { releaseDate(for: $0) < releaseDate(for: $1) }
@@ -73,7 +79,7 @@ struct BookmarksView: View {
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if bookmarkedEntries.isEmpty {
+                if sortedBookmarkedEntries.isEmpty { // Verwenden Sie sortedBookmarkedEntries, um leeren Zustand zu prüfen
                     VStack(spacing: 12) {
                         Image(systemName: "bookmark.slash")
                             .font(.system(size: 44))
@@ -90,7 +96,7 @@ struct BookmarksView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity, alignment: .center)
                 } else {
-                    List(sortedBookmarkedEntries) { entry in
+                    List(sortedBookmarkedEntries) { entry in // Verwenden Sie die sortierte Liste
                         let feedEntry = FeedEntry(
                             title: entry.title,
                             link: entry.link,
@@ -105,14 +111,27 @@ struct BookmarksView: View {
                         let colorSourceURL = matchedFeed?.url
                             ?? feedEntry.feedURL
                             ?? feeds.first(where: { $0.title.caseInsensitiveCompare(feedName) == .orderedSame })?.url
-                        let feedColor = theme.color(for: colorSourceURL)
+                        let resolvedColor: Color = {
+                            if let url = colorSourceURL {
+                                let c = theme.color(for: url)
+                                // If ThemeSettings returns a very light default (heuristic), keep it; otherwise, use it.
+                                // To be robust, provide a deterministic fallback based on URL hash if needed.
+                                if c != Color.clear { return c }
+                                return deterministicColor(from: url)
+                            } else {
+                                return deterministicColor(from: feedName)
+                            }
+                        }()
+                        let feedColor = resolvedColor
                         let detailEntry: FeedEntry = {
                             var updated = feedEntry
                             updated.sourceTitle = feedName
                             updated.feedURL = colorSourceURL
                             return updated
                         }()
-                        let entryDate = entry.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }
+                        // Verwenden Sie den robusten Parser für die Anzeige und für releaseDate()
+                        let entryDate = (entry.pubDateString).map { DateParser.parse($0) }
+                        let displayDate: Date? = (entryDate == Date.distantPast ? nil : entryDate)
                         let isRead = store.isRead(articleID: entry.link)
 
                         Button {
@@ -124,7 +143,7 @@ struct BookmarksView: View {
                                 title: entry.title,
                                 summary: nil,
                                 isRead: isRead,
-                                date: entryDate,
+                                date: displayDate,
                                 isBookmarked: true
                             )
                             .contentShape(Rectangle())
@@ -220,9 +239,9 @@ private extension BookmarksView {
     }
 
     func releaseDate(for entry: FeedEntryModel) -> Date {
-        if let pub = entry.pubDateString,
-           let parsed = DateFormatter.rfc822.date(from: pub) {
-            return parsed
+        if let pub = entry.pubDateString {
+            let parsed = DateParser.parse(pub)
+            if parsed != .distantPast { return parsed }
         }
         return entry.date
     }
@@ -258,5 +277,13 @@ private extension BookmarksView {
             return h
         }
     }
+    
+    func deterministicColor(from string: String) -> Color {
+        var hasher = Hasher()
+        hasher.combine(string)
+        let value = hasher.finalize()
+        // Map hash to hue in [0,1]
+        let hue = Double(abs(value % 360)) / 360.0
+        return Color(hue: hue, saturation: 0.6, brightness: 0.8)
+    }
 }
-

@@ -32,7 +32,8 @@ enum BookmarkService {
             existing.sourceTitle = entry.sourceTitle
             existing.sourceURL = entry.feedURL
             existing.pubDateString = entry.pubDateString
-            existing.date = (entry.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }) ?? Date()
+            let parsed = entry.pubDateString.map { DateParser.parse($0) } ?? .distantPast
+            existing.date = (parsed == .distantPast ? Date() : parsed)
             existing.isBookmarked = true
         } else {
             let model = FeedEntryModel(
@@ -44,7 +45,10 @@ enum BookmarkService {
                 sourceTitle: entry.sourceTitle,
                 sourceURL: entry.feedURL,
                 pubDateString: entry.pubDateString,
-                date: (entry.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }) ?? Date(),
+                date: {
+                    let parsed = entry.pubDateString.map { DateParser.parse($0) } ?? .distantPast
+                    return (parsed == .distantPast ? Date() : parsed)
+                }(),
                 isBookmarked: true,
                 isRead: entry.isRead
             )

@@ -3,6 +3,42 @@ import Foundation
 import FoundationModels
 import SwiftData
 
+// Annahme: Die DateParser- und DateFormatter-Extension aus der vorherigen Antwort
+// ist in einer separaten Datei (z.B. DateUtils.swift) vorhanden.
+
+// ----------------------------------------------------------------------
+// WICHTIG: Ersetze die DateParser.parse(from:) durch Deine tatsächliche Funktion.
+// HIER WIRD DIE ERSETZTE DATEUTILS-LOGIK ALS PLAUSIBEL ANGENOMMEN.
+// ----------------------------------------------------------------------
+// Hier ist ein Platzhalter für DateParser, falls er nicht im gleichen File ist.
+// Wenn DateParser im selben File wie die Extension ist, ignoriere diesen Block.
+/*
+struct DateParser {
+    static func parse(_ dateString: String?) -> Date {
+        guard let s = dateString else { return Date.distantPast }
+        // 1. ISO8601 Check
+        if s.contains("-") && s.contains(":") {
+            if let isoDate = ISO8601DateFormatter().date(from: s) {
+                return isoDate
+            }
+        }
+        // 2. YYYY Check
+        if s.range(of: "\\s\\d{4}", options: .regularExpression) != nil {
+            if let date = DateFormatter.rfc822.date(from: s) {
+                return date
+            }
+        }
+        // 3. YY Fallback
+        if let date = DateFormatter.rfc822TwoDigitYear.date(from: s) {
+            return date
+        }
+        return Date.distantPast
+    }
+}
+*/
+// ----------------------------------------------------------------------
+
+
 struct ContentView: View {
     @AppStorage("savedFeeds") private var savedFeedsData: Data = Data()
     @AppStorage("cachedEntries") private var cachedEntriesData: Data = Data()
@@ -69,6 +105,42 @@ struct FeedListView: View {
     private var sortIconName: String {
         sortOption == "Neueste zuerst" ? "arrow.down.circle" : "arrow.up.circle"
     }
+    
+    // 🥇 KORRIGIERTE FUNKTION 1: Verwendet DateParser.parse()
+    private func sortAllEntriesGlobally() {
+            // 1. Alle Einträge global nach Datum sortieren
+            let sorted = entries.sorted { lhs, rhs in
+                // NUTZT JETZT DEN ROBUSTEN DATEPARSER
+                let ld = DateParser.parse(lhs.pubDateString)
+                let rd = DateParser.parse(rhs.pubDateString)
+                
+                switch sortOption {
+                case "Neueste zuerst":
+                    return ld > rd
+                default: // "Älteste zuerst"
+                    return ld < rd
+                }
+            }
+
+            // 2. MaxArticlesPerFeed nach globaler Sortierung anwenden
+            guard maxArticlesPerFeed > 0 else {
+                entries = sorted
+                return
+            }
+
+            var feedCount: [String: Int] = [:]
+            var limited: [FeedEntry] = []
+            for entry in sorted {
+                let feedURL = entry.feedURL ?? "unknown"
+                let count = feedCount[feedURL] ?? 0
+                if count < maxArticlesPerFeed {
+                    limited.append(entry)
+                    feedCount[feedURL] = count + 1
+                }
+            }
+
+            entries = limited
+        }
     
     var body: some View {
         NavigationStack(path: $path) {
@@ -172,17 +244,19 @@ struct FeedListView: View {
                 restoreCachedEntries()
             }
             triggerInitialLoadIfPossible()
+            pruneEntriesForRemovedFeeds()
             Task { @MainActor in
                 refreshBookmarkedLinks()
             }
         }
         .onChange(of: sortOption) { oldValue, newValue in
             withAnimation(.easeInOut(duration: 0.2)) {
-                applySorting()
+                sortAllEntriesGlobally()
             }
         }
         .onChange(of: feeds) { oldValue, newValue in
             triggerInitialLoadIfPossible()
+            pruneEntriesForRemovedFeeds()
         }
         .onChange(of: showReadEntries) { oldValue, newValue in
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -284,6 +358,23 @@ struct FeedListView: View {
             return theme.uiAccentColor.opacity(0.35)
         }
     }
+
+    // 🥇 KORRIGIERTE FUNKTION 3: Verwendet DateParser.parse()
+    private func entryDate(for entry: FeedEntry) -> Date {
+        DateParser.parse(entry.pubDateString)
+    }
+    
+    private func pruneEntriesForRemovedFeeds() {
+        let activeURLs = Set(feeds.map { $0.url })
+        let beforeCount = entries.count
+        entries.removeAll { entry in
+            guard let url = entry.feedURL else { return true }
+            return !activeURLs.contains(url)
+        }
+        if entries.count != beforeCount {
+            persistEntriesCache()
+        }
+    }
 }
 
 // MARK: - Feed Management Logic
@@ -323,7 +414,8 @@ extension FeedListView {
                         StoredFeedArticle(
                             title: entry.title,
                             link: entry.link,
-                            publishedAt: entry.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) },
+                            // 🥇 KORRIGIERTE FUNKTION 2: Verwendet DateParser.parse()
+                            publishedAt: entry.pubDateString.flatMap { DateParser.parse($0) },
                             summary: HTMLText.stripHTML(entry.content),
                             feedTitle: feed.title
                         )
@@ -360,7 +452,7 @@ extension FeedListView {
             }
         }
 
-        enforceArticleLimit(feedURLByLink: feedURLByLink)
+        sortAllEntriesGlobally()
         persistEntriesCache()
 
         isLoading = false
@@ -385,27 +477,33 @@ extension FeedListView {
 
     @MainActor
     func applySorting() {
+        // Diese Funktion ist redundant, da sortAllEntriesGlobally() die globale Sortierung übernimmt.
+        // Es ist besser, sie auf DateParser umzustellen oder zu entfernen, falls nur
+        // sortAllEntriesGlobally() verwendet wird. Wir stellen sie auf den robusten Parser um.
+        
         switch sortOption {
         case "Neueste zuerst":
             entries.sort { lhs, rhs in
-                let ld = lhs.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }
-                let rd = rhs.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }
+                let ld = DateParser.parse(lhs.pubDateString)
+                let rd = DateParser.parse(rhs.pubDateString)
+                
                 switch (ld, rd) {
-                case let (l?, r?): return l > r
-                case (_?, nil): return true
-                case (nil, _?): return false
+                case let (l, r) where l != Date.distantPast && r != Date.distantPast: return l > r
+                case (let l, _) where l != Date.distantPast: return true
+                case (_, let r) where r != Date.distantPast: return false
                 default:
                     return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedDescending
                 }
             }
         default: // Älteste zuerst
             entries.sort { lhs, rhs in
-                let ld = lhs.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }
-                let rd = rhs.pubDateString.flatMap { DateFormatter.rfc822.date(from: $0) }
+                let ld = DateParser.parse(lhs.pubDateString)
+                let rd = DateParser.parse(rhs.pubDateString)
+                
                 switch (ld, rd) {
-                case let (l?, r?): return l < r
-                case (_?, nil): return false
-                case (nil, _?): return true
+                case let (l, r) where l != Date.distantPast && r != Date.distantPast: return l < r
+                case (let l, _) where l != Date.distantPast: return false
+                case (_, let r) where r != Date.distantPast: return true
                 default:
                     return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
                 }
@@ -414,34 +512,24 @@ extension FeedListView {
     }
 
     private func enforceArticleLimit(feedURLByLink: [String: String]) {
-        guard maxArticlesPerFeed > 0 else {
-            applySorting()
-            return
+        // Diese Funktion enthält die Begrenzungslogik jetzt in sortAllEntriesGlobally().
+        // Hier wird die Sortierung trotzdem mit dem korrekten Parser durchgeführt.
+        let sortedEntries: [FeedEntry]
+        switch sortOption {
+        case "Neueste zuerst":
+            sortedEntries = entries.sorted {
+                let ld = entryDate(for: $0)
+                let rd = entryDate(for: $1)
+                return ld > rd
+            }
+        default:
+            sortedEntries = entries.sorted {
+                let ld = entryDate(for: $0)
+                let rd = entryDate(for: $1)
+                return ld < rd
+            }
         }
-
-        var grouped: [String: [FeedEntry]] = [:]
-        for entry in entries {
-            let feedURL = entry.feedURL
-                ?? feedURLByLink[entry.link]
-                ?? feedSource(for: entry)?.url
-                ?? entry.link
-            grouped[feedURL, default: []].append(entry)
-        }
-
-        var trimmed: [FeedEntry] = []
-        for (_, items) in grouped {
-            let sorted = items.sorted { entryDate(for: $0) > entryDate(for: $1) }
-            trimmed.append(contentsOf: sorted.prefix(maxArticlesPerFeed))
-        }
-
-        entries = trimmed
-        applySorting()
-    }
-
-    private func entryDate(for entry: FeedEntry) -> Date {
-        entry.pubDateString
-            .flatMap { DateFormatter.rfc822.date(from: $0) }
-            ?? Date.distantPast
+        entries = sortedEntries
     }
 
     private func persistEntriesCache() {
@@ -461,7 +549,8 @@ extension FeedListView {
                 cached[index].isRead = store.isRead(articleID: cached[index].link)
             }
             entries = cached
-            enforceArticleLimit(feedURLByLink: [:])
+            sortAllEntriesGlobally()
+            pruneEntriesForRemovedFeeds()
         }
     }
 
@@ -581,7 +670,7 @@ struct EmptyFeedView: View {
         .frame(maxWidth: .infinity, alignment: .center)
         //.background(
         //    RoundedRectangle(cornerRadius: 22, style: .continuous)
-         //       .fill(theme.uiAccentColor.opacity(0.12))
+        //        .fill(theme.uiAccentColor.opacity(0.12))
         //)
     }
 }

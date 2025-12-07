@@ -52,7 +52,7 @@ struct ContentView: View {
             }
             
             Tab(role: .search) {
-                SearchView()
+                    SearchView()
             }
             
             Tab("Lesezeichen", systemImage: "bookmark") {
@@ -61,6 +61,7 @@ struct ContentView: View {
             
             Tab("Einstellungen", systemImage: "gear") {
                 SettingsView(feeds: $feeds, savedFeedsData: $savedFeedsData)
+                
             }
         }
         .tabViewStyle(.automatic)
@@ -76,7 +77,7 @@ struct ContentView: View {
             feeds = decoded
         } else {
             // Beispiel-Feed, wenn leer
-            feeds = [FeedSource(title: "MacRumors", url: "https://feeds.macrumors.com/MacRumors-All"),FeedSource(title: "UFC", url: "https://ufc.tu-dortmund.de/feed")]
+            feeds = [FeedSource(title: "MacRumors", url: "https://feeds.macrumors.com/MacRumors-All")]
         }
     }
 }

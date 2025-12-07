@@ -12,6 +12,7 @@ import Combine
 
 struct SearchView: View {
     @AppStorage("savedFeeds") private var savedFeedsData: Data = Data()
+    @AppStorage("cachedEntries") private var cachedEntriesData: Data = Data() // <-- neu
     @State private var feeds: [FeedSource] = []
     @State private var searchText: String = ""
     @State private var snapshotResults: [ArticleSearchResult] = []
@@ -150,7 +151,12 @@ struct SearchView: View {
         let isBookmarked = bookmarkedLinks.contains(result.link)
 
         Button {
-            path.append(result.feedEntry)
+            // Versuche zuerst, einen vollständigen gecachten Eintrag zu finden (inkl. Bild/Content)
+            if let full = cachedEntry(for: result.link) {
+                path.append(full)
+            } else {
+                path.append(result.feedEntry)
+            }
         } label: {
             ArticleCardView(
                 feedTitle: result.feedTitle,
@@ -188,6 +194,17 @@ struct SearchView: View {
             .accessibilityLabel(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen")
             .tint(isBookmarked ? .red : theme.uiAccentColor)
         }
+    }
+
+    // --- Neu: Suche in gecachten Entries (persistiert von FeedListView) ---
+    private func cachedEntry(for link: String) -> FeedEntry? {
+        guard !cachedEntriesData.isEmpty else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        if let cached = try? decoder.decode([FeedEntry].self, from: cachedEntriesData) {
+            return cached.first { $0.link == link }
+        }
+        return nil
     }
 
     private func feedTitleFromURL(_ urlString: String) -> String {

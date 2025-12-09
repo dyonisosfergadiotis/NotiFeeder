@@ -109,135 +109,87 @@ struct FeedListView: View {
     
     // 🥇 KORRIGIERTE FUNKTION 1: Verwendet DateParser.parse()
     private func sortAllEntriesGlobally() {
-            // 1. Alle Einträge global nach Datum sortieren
-            let sorted = entries.sorted { lhs, rhs in
-                // NUTZT JETZT DEN ROBUSTEN DATEPARSER
-                let ld = DateParser.parse(lhs.pubDateString)
-                let rd = DateParser.parse(rhs.pubDateString)
-                
-                switch sortOption {
-                case "Neueste zuerst":
-                    return ld > rd
-                default: // "Älteste zuerst"
-                    return ld < rd
-                }
+        // 1. Alle Einträge global nach Datum sortieren
+        let sortedEntries: [FeedEntry] = entries.sorted { lhs, rhs in
+            let ld = DateParser.parse(lhs.pubDateString)
+            let rd = DateParser.parse(rhs.pubDateString)
+            switch sortOption {
+            case "Neueste zuerst":
+                return ld > rd
+            default:
+                return ld < rd
             }
-
-            // 2. MaxArticlesPerFeed nach globaler Sortierung anwenden
-            guard maxArticlesPerFeed > 0 else {
-                entries = sorted
-                return
-            }
-
-            var feedCount: [String: Int] = [:]
-            var limited: [FeedEntry] = []
-            for entry in sorted {
-                let feedURL = entry.feedURL ?? "unknown"
-                let count = feedCount[feedURL] ?? 0
-                if count < maxArticlesPerFeed {
-                    limited.append(entry)
-                    feedCount[feedURL] = count + 1
-                }
-            }
-
-            entries = limited
         }
+
+        // 2. MaxArticlesPerFeed nach globaler Sortierung anwenden
+        guard maxArticlesPerFeed > 0 else {
+            entries = sortedEntries
+            return
+        }
+
+        var feedCount: [String: Int] = [:]
+        var limitedEntries: [FeedEntry] = []
+        for entry in sortedEntries {
+            let feedURL = entry.feedURL ?? "unknown"
+            let count = feedCount[feedURL] ?? 0
+            if count < maxArticlesPerFeed {
+                limitedEntries.append(entry)
+                feedCount[feedURL] = count + 1
+            }
+        }
+
+        entries = limitedEntries
+    }
+    
+    private var feedListView: some View {
+        List {
+            ForEach(filteredEntries) { entry in
+                entryRow(for: entry)
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .listStyle(.plain)
+        .listRowSpacing(6)
+        //.background(Color(.systemGroupedBackground))
+        .overlay {
+            if filteredEntries.isEmpty {
+                EmptyFeedView()
+                    .environmentObject(theme)
+                    .padding(.horizontal, 32)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                    .animation(.easeInOut(duration: 0.2), value: filteredEntries.isEmpty)
+            }
+        }
+    }
     
     var body: some View {
         NavigationStack(path: $path) {
-            List {
-                ForEach(filteredEntries) { entry in
-                    entryRow(for: entry)
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .listStyle(.plain)
-            .listRowSpacing(6)
-            .background(Color(.systemGroupedBackground))
-            .overlay {
-                if filteredEntries.isEmpty {
-                    EmptyFeedView()
-                        .environmentObject(theme)
-                        .padding(.horizontal, 32)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                        .animation(.easeInOut(duration: 0.2), value: filteredEntries.isEmpty)
-                }
-            }
-            .refreshable {
-                // Cancel a previous refresh if still running
-                refreshTask?.cancel()
-                let now = Date()
-                if let last = lastRefreshDate, now.timeIntervalSince(last) < 0.4 {
-                    // Debounce very fast repeated pulls
-                    return
-                }
-                lastRefreshDate = now
+            feedListView
+                .refreshable {
+                    // Cancel a previous refresh if still running
+                    refreshTask?.cancel()
+                    let now = Date()
+                    if let last = lastRefreshDate, now.timeIntervalSince(last) < 0.4 {
+                        // Debounce very fast repeated pulls
+                        return
+                    }
+                    lastRefreshDate = now
 
-                refreshTask = Task { @MainActor in
-                    // Small, consistent delay for nicer pull-to-refresh feel
-                    try? await Task.sleep(nanoseconds: 220_000_000)
-                    _ = withTransaction(Transaction(animation: .easeInOut(duration: 0.22))) {
-                        Task { await loadRSSFeed() }
+                    refreshTask = Task { @MainActor in
+                        // Small, consistent delay for nicer pull-to-refresh feel
+                        try? await Task.sleep(nanoseconds: 220_000_000)
+                        _ = withTransaction(Transaction(animation: .easeInOut(duration: 0.22))) {
+                            Task { await loadRSSFeed() }
+                        }
                     }
+                    await refreshTask?.value
                 }
-                await refreshTask?.value
-            }
-            .navigationTitle("Feed")
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if hasUnread {
-                        Button {
-                            markAllAsRead()
-                        } label: {
-                            Image(systemName: "checkmark.circle.fill")
-                        }
-                        .tint(theme.uiAccentColor)
-                        .accessibilityLabel("Alle ungelesenen als gelesen markieren")
-                    }
-
-                    Button {
-                        showReadEntries.toggle()
-                    } label: {
-                        Image(systemName: showReadEntries ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
-                    }
-                    .contentTransition(.symbolEffect)
-                    .animation(.easeInOut(duration: 0.2), value: showReadEntries)
-                    .tint(theme.uiAccentColor)
-                    .accessibilityLabel(showReadEntries ? "Gelesene ausblenden" : "Gelesene anzeigen")
-
-                    Menu {
-                        Button {
-                            guard sortOption != "Neueste zuerst" else { return }
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                sortOption = "Neueste zuerst"
-                            }
-                        } label: {
-                            Label("Neueste zuerst", systemImage: "arrow.down.circle")
-                                .labelStyle(.titleAndIcon)
-                        }
-                        Button {
-                            guard sortOption != "Älteste zuerst" else { return }
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                sortOption = "Älteste zuerst"
-                            }
-                        } label: {
-                            Label("Älteste zuerst", systemImage: "arrow.up.circle")
-                                .labelStyle(.titleAndIcon)
-                        }
-                    } label: {
-                        Image(systemName: sortIconName)
-                    }
-                    .tint(theme.uiAccentColor)
+                .navigationTitle("Feed")
+                .toolbar(content: { feedToolbar })
+                .navigationDestination(for: FeedEntry.self) { entry in
+                    navigationDestinationView(entry)
                 }
-            }
-            .navigationDestination(for: FeedEntry.self) { entry in
-                FeedDetailView(entry: entry,
-                               feedColor: feedColor(for: feedSource(for: entry)?.url),
-                               onAppearMarkRead: {
-                    markAsRead(entry)
-                })
-            }
         }
         .onAppear {
             if !didRestoreCachedEntries {
@@ -275,6 +227,78 @@ struct FeedListView: View {
             }
         }
     }
+    
+    private var feedToolbar: some ToolbarContent {
+        Group {
+            
+            // Gruppe 1: Ungelesen-Button
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if hasUnread {
+                    Button {
+                        markAllAsRead()
+                    } label: {
+                        Image(systemName: "checkmark.circle.fill")
+                    }
+                    .tint(theme.uiAccentColor)
+                    .accessibilityLabel("Alle ungelesenen als gelesen markieren")
+                }
+            }
+
+            // Echter ToolbarSpacer auf Top-Level
+            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+
+            // Gruppe 2: Filter + Menü
+            ToolbarItemGroup(placement: .topBarTrailing) {
+
+                Button {
+                    showReadEntries.toggle()
+                } label: {
+                    Image(systemName: showReadEntries
+                          ? "line.3.horizontal.decrease.circle"
+                          : "line.3.horizontal.decrease.circle.fill")
+                }
+                .contentTransition(.symbolEffect)
+                .animation(.easeInOut(duration: 0.2), value: showReadEntries)
+                .tint(theme.uiAccentColor)
+                .accessibilityLabel(showReadEntries ? "Gelesene ausblenden" : "Gelesene anzeigen")
+
+                Menu {
+                    Button {
+                        guard sortOption != "Neueste zuerst" else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            sortOption = "Neueste zuerst"
+                        }
+                    } label: {
+                        Label("Neueste zuerst", systemImage: "arrow.down.circle")
+                            .labelStyle(.titleAndIcon)
+                    }
+
+                    Button {
+                        guard sortOption != "Älteste zuerst" else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            sortOption = "Älteste zuerst"
+                        }
+                    } label: {
+                        Label("Älteste zuerst", systemImage: "arrow.up.circle")
+                            .labelStyle(.titleAndIcon)
+                    }
+
+                } label: {
+                    Image(systemName: sortIconName)
+                }
+                .tint(theme.uiAccentColor)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private func navigationDestinationView(_ entry: FeedEntry) -> some View {
+        FeedDetailView(entry: entry,
+                       feedColor: feedColor(for: feedSource(for: entry)?.url),
+                       onAppearMarkRead: {
+            markAsRead(entry)
+        })
+    }
 
     @ViewBuilder
     private func entryRow(for entry: FeedEntry) -> some View {
@@ -308,7 +332,7 @@ struct FeedListView: View {
         .buttonStyle(.plain)
         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
         .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        //.listRowBackground(Color.clear)
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             if entry.isRead {
                 Button {

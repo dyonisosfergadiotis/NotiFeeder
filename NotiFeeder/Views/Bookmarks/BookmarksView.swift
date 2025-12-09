@@ -88,7 +88,7 @@ struct BookmarksView: View {
              }
              .navigationTitle("Lesezeichen")
              .toolbar {
-                 ToolbarItem(placement: .navigationBarTrailing) {
+                 ToolbarItem(placement: .topBarTrailing) {
                      Menu {
                          Text("Hinzugefügt")
                              .font(.caption2)

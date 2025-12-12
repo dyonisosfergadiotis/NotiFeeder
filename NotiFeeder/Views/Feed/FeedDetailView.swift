@@ -6,20 +6,25 @@ import SwiftData
 
 struct FeedDetailView: View {
     var entry: FeedEntry
-    var onAppearMarkRead: (() -> Void)? = nil
     var feedColor: Color?
     @EnvironmentObject private var theme: ThemeSettings
     @EnvironmentObject private var store: ArticleStore
     @Environment(\.modelContext) private var modelContext
 
-    @State private var webView = WKWebView()
+    @State private var webView: WKWebView = {
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+        return WKWebView(frame: .zero, configuration: config)
+    }()
     @State private var shareText: String = ""
     @State private var activeSheet: ActiveSheet?
     @State private var isReadLocal: Bool = false
     @State private var isBookmarked: Bool = false
     @AppStorage("readerFontScale") private var readerFontScale: Double = 1.0
-    @AppStorage("readerFontFamily") private var readerFontFamily: String = ReaderFontFamily.system.rawValue
+    @AppStorage("readerFontFamily") private var readerFontFamily: String = ReaderFontFamily.rounded.rawValue
     @AppStorage("readerLineSpacing") private var readerLineSpacing: Double = 1.4
+    @AppStorage("readerTextAlignment") private var readerTextAlignmentRaw: String = "left"
 
     private enum ActiveSheet: Identifiable {
         case share(payload: String, token: UUID = UUID())
@@ -35,52 +40,100 @@ struct FeedDetailView: View {
         private static let readerSettingsID = UUID()
     }
 
-    init(entry: FeedEntry, feedColor: Color? = nil, onAppearMarkRead: (() -> Void)? = nil) {
+    init(entry: FeedEntry, feedColor: Color? = nil) {
         self.entry = entry
         self.feedColor = feedColor
-        self.onAppearMarkRead = onAppearMarkRead
+    }
+
+    private var headerView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text("von \(entry.author ?? "Unknown")")
+                Text("·")
+                Text(entry.sourceTitle ?? "Quelle")
+            }
+            .font(.subheadline)
+            .foregroundColor(.secondary)
+            if let dateString = entry.pubDateString {
+                let parsed = DateParser.parse(dateString)
+                if parsed != Date.distantPast {
+                    Text(DateFormatter.localized.string(from: parsed))
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                } else {
+                    Text(dateString)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .bottomLeading)
+        .background(
+            LinearGradient(colors: [headerTint.opacity(0.24), Color(.systemBackground)],
+                           startPoint: .top,
+                           endPoint: .bottom)
+                .opacity(0.9)
+        )
+    }
+
+    private var contentWebView: some View {
+        WebView(webView: webView,
+                htmlContent: formattedHTML(accentHex: theme.uiAccentHexString))
+            .frame(maxHeight: .infinity)
+            .edgesIgnoringSafeArea(.bottom)
+    }
+
+    @ViewBuilder private var bottomToolbarItems: some View {
+            HStack {
+                Button {
+                    if let url = URL(string: entry.link) {
+                        UIApplication.shared.open(url)
+                    }
+                } label: {
+                    Image(systemName: "safari")
+                }
+                .tint(feedColor ?? theme.uiAccentColor)
+
+                Spacer(minLength: 20)
+
+                Button {
+                    gatherShareContent()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .tint(feedColor ?? theme.uiAccentColor)
+
+                Spacer(minLength: 20)
+
+                Button {
+                    let newValue = !isReadLocal
+                    isReadLocal = newValue
+                    store.setRead(newValue, articleID: entry.link)
+                } label: {
+                    Image(systemName: isReadLocal ? "checkmark.circle.fill" : "checkmark.circle")
+                }
+                .tint(feedColor ?? theme.uiAccentColor)
+
+                Spacer(minLength: 20)
+
+                Button {
+                    activeSheet = .readerSettings
+                } label: {
+                    Image(systemName: "textformat.size")
+                }
+                .tint(feedColor ?? theme.uiAccentColor)
+            }
+            .padding(.horizontal, 20)
+       
     }
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
+                headerView
 
-                // Header in der unteren Hälfte
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 4) {
-                        Text("by \(entry.author ?? "Unknown")")
-                        Text("·")
-                        Text(entry.sourceTitle ?? "Quelle")
-                    }
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                    if let dateString = entry.pubDateString {
-                        let parsed = DateParser.parse(dateString)
-                        if parsed != Date.distantPast {
-                            Text(DateFormatter.localized.string(from: parsed))
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        } else {
-                            Text(dateString)
-                                .font(.footnote)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .bottomLeading)
-                .background(
-                    LinearGradient(colors: [headerTint.opacity(0.24), Color(.systemBackground)],
-                                   startPoint: .top,
-                                   endPoint: .bottom)
-                        .opacity(0.9)
-                )
-
-                // WebView unten
-                WebView(webView: webView,
-                        htmlContent: formattedHTML(accentHex: theme.uiAccentHexString))
-                    .frame(maxHeight: .infinity)
-                    .edgesIgnoringSafeArea(.bottom)
+                contentWebView
             }
             .transition(.opacity.combined(with: .move(edge: .trailing)))
             .animation(.smooth(duration: 0.22), value: entry.id)
@@ -95,47 +148,8 @@ struct FeedDetailView: View {
                     }
                     .tint(feedColor ?? theme.uiAccentColor)
                 }
-                ToolbarItemGroup(placement: .bottomBar) {
-                    HStack(spacing: 12) {
-                        Button {
-                            if let url = URL(string: entry.link) {
-                                UIApplication.shared.open(url)
-                            }
-                        } label: {
-                            Image(systemName: "safari")
-                        }
-                        .tint(feedColor ?? theme.uiAccentColor)
-                        .frame(maxWidth: .infinity)
-
-                        Button {
-                            gatherShareContent()
-                        } label: {
-                            Image(systemName: "square.and.arrow.up")
-                        }
-                        .tint(feedColor ?? theme.uiAccentColor)
-                        .frame(maxWidth: .infinity)
-
-                        Button {
-                            let newValue = !isReadLocal
-                            isReadLocal = newValue
-                            store.setRead(newValue, articleID: entry.link)
-                        } label: {
-                            Image(systemName: isReadLocal ? "checkmark.circle.fill" : "checkmark.circle")
-                        }
-                        .tint(feedColor ?? theme.uiAccentColor)
-                        .frame(maxWidth: .infinity)
-
-                        Button {
-                            activeSheet = .readerSettings
-                        } label: {
-                            Image(systemName: "textformat.size")
-                        }
-                        .tint(feedColor ?? theme.uiAccentColor)
-                        .frame(maxWidth: .infinity)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
+                ToolbarItem(placement: .bottomBar) {
+                    bottomToolbarItems
                 }
             }
             .toolbarBackground((feedColor ?? theme.uiAccentColor).opacity(0.1), for: .bottomBar)
@@ -146,7 +160,8 @@ struct FeedDetailView: View {
             .navigationBarBackButtonHidden(false)
             .onAppear {
                 DispatchQueue.main.async {
-                    onAppearMarkRead?()
+                    // Mark article as recently read (not full read marking)
+                    store.markRecentlyRead(articleID: entry.link)
                     isReadLocal = store.isRead(articleID: entry.link)
                     isBookmarked = isCurrentlyBookmarked()
                 }
@@ -156,28 +171,57 @@ struct FeedDetailView: View {
                 switch sheet {
                 case .share(let payload, _):
                     ActivityView(activityItems: [payload])
-                        .presentationDetents([.medium, .large])
+                        .presentationDetents([.medium])
                         .presentationDragIndicator(.visible)
                 case .readerSettings:
-                    ReaderSettingsPanel(fontScale: $readerFontScale,
+                    ReaderSettingsPanel(textAlignment: $readerTextAlignmentRaw,
+                                        fontScale: $readerFontScale,
                                         fontFamily: $readerFontFamily,
                                         lineSpacing: $readerLineSpacing)
+                    .presentationDetents([.fraction(0.44)]) // <— hier
+                    .presentationDragIndicator(.visible)
                 }
             }
         }
         .onAppear {
             DispatchQueue.main.async {
-                onAppearMarkRead?()
+                // Mark article as recently read (not full read marking)
+                store.markRecentlyRead(articleID: entry.link)
                 isBookmarked = isCurrentlyBookmarked()
             }
         }
     }
 
+    private func fixYouTubeIframes(in html: String) -> String {
+        let pattern = "<iframe([^>]*)src=\"([^\"]*youtube[^\"]*)\"([^>]*)>"
+        return html.replacingOccurrences(
+            of: pattern,
+            with: "<iframe$1src=\"$2\"$3 allow=\"fullscreen\" playsinline></iframe>",
+            options: .regularExpression
+        )
+    }
 
     private func formattedHTML(accentHex: String) -> String {
         let fontSize = 18 * readerFontScale
         let lineHeight = readerLineSpacing
-        let fontFamilyCSS = (ReaderFontFamily(rawValue: readerFontFamily) ?? .system).cssValue
+        let fontFamilyCSS = (ReaderFontFamily(rawValue: readerFontFamily) ?? .rounded).cssValue
+
+        let textAlignCSS: String
+        let textJustifyCSS: String
+        switch readerTextAlignmentRaw {
+        case "center":
+            textAlignCSS = "center"
+            textJustifyCSS = "auto"
+        case "right":
+            textAlignCSS = "right"
+            textJustifyCSS = "auto"
+        case "justified", "justify":
+            textAlignCSS = "justify"
+            textJustifyCSS = "inter-word"
+        default:
+            textAlignCSS = "left"
+            textJustifyCSS = "auto"
+        }
 
         return  """
         <html>
@@ -190,6 +234,8 @@ struct FeedDetailView: View {
                 padding: 16px;
                 line-height: \(lineHeight);
                 margin: 0;
+                text-align: \(textAlignCSS);
+                text-justify: \(textJustifyCSS);
               }
         
               @media (prefers-color-scheme: dark) {
@@ -226,6 +272,16 @@ struct FeedDetailView: View {
                   margin: 16px auto;
               }
         
+              iframe {
+                  display: block;
+                  max-width: 90%;
+                  width: 90%;
+                  height: auto;
+                  aspect-ratio: 16 / 9;
+                  margin: 16px auto;
+                  border-radius: 10px;
+              }
+        
               h1, h2, h3 {
                 font-weight: 600;
                 margin-top: 1em;
@@ -233,7 +289,7 @@ struct FeedDetailView: View {
             </style>
           </head>
           <body>
-            \(entry.content)
+            \(fixYouTubeIframes(in: entry.content))
           </body>
         </html>
         """

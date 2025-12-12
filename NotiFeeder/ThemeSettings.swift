@@ -1,5 +1,8 @@
 import SwiftUI
 import Combine
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // Version 1.2 features: What's New splash + a few inline info bubbles
 
@@ -38,10 +41,11 @@ struct FeedColorOption: Identifiable, Equatable {
 final class ThemeSettings: ObservableObject {
     private enum Keys {
         static let feedColorMap = "feedColorMap"
+        static let uiAccentHex = "uiAccentHex"
     }
 
     /// Carefully chosen accent tone reserved for the overall UI chrome.
-    private let uiAccentHex = "#9CCFFF" // Professional deep blue
+    @Published private(set) var uiAccentHex: String = "#9CCFFF" // default; overridden in init
 
     private let defaults: UserDefaults
     private(set) var decoder = JSONDecoder()
@@ -52,6 +56,7 @@ final class ThemeSettings: ObservableObject {
     init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
         loadFeedColors()
+        self.uiAccentHex = loadUIAccentHex()
     }
 
     var uiAccentColor: Color {
@@ -64,6 +69,18 @@ final class ThemeSettings: ObservableObject {
 
     var uiAccentHexString: String {
         uiAccentHex
+    }
+
+    func setUIAccentColor(_ color: Color) {
+        #if canImport(UIKit)
+        let uiColor = UIColor(color)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        if uiColor.getRed(&r, green: &g, blue: &b, alpha: &a) {
+            let hex = String(format: "#%02lX%02lX%02lX", lroundf(Float(r * 255)), lroundf(Float(g * 255)), lroundf(Float(b * 255)))
+            uiAccentHex = hex
+            saveUIAccentHex()
+        }
+        #endif
     }
 
     func color(for feedURL: String?) -> Color {
@@ -113,6 +130,17 @@ final class ThemeSettings: ObservableObject {
         if let data = try? encoder.encode(feedColorMap) {
             defaults.set(data, forKey: Keys.feedColorMap)
         }
+    }
+
+    private func loadUIAccentHex() -> String {
+        if let stored = defaults.string(forKey: Keys.uiAccentHex), !stored.isEmpty {
+            return stored
+        }
+        return "#9CCFFF"
+    }
+
+    private func saveUIAccentHex() {
+        defaults.set(uiAccentHex, forKey: Keys.uiAccentHex)
     }
 }
 
@@ -175,3 +203,4 @@ struct ThemeSettings_BubblesPreview: View {
     ThemeSettings_BubblesPreview()
 }
 #endif
+

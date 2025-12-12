@@ -6,6 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject private var theme: ThemeSettings
     @State private var showingAddFeed = false
     @State private var feedBeingEdited: FeedSource? = nil
+    @State private var showingAccentPicker = false
     
     var body: some View {
         NavigationStack {
@@ -33,6 +34,34 @@ struct SettingsView: View {
                     accentColor: theme.uiAccentColor
                 )
                 .environmentObject(theme)
+                
+                Section(header: Text("Personalisierung")) {
+                    Button {
+                        showingAccentPicker = true
+                    } label: {
+                        HStack(spacing: 14) {
+                            Circle()
+                                .fill(theme.uiAccentColor)
+                                .frame(width: 33, height: 33)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Akzentfarbe")
+                                    .appTitle()
+                                Text("Wähle eine Pastellfarbe")
+                                    .appSecondary()
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 6)
+                    }
+                    .tint(theme.uiAccentColor)
+                    .sheet(isPresented: $showingAccentPicker) {
+                        AccentColorPickerSheet(selected: theme.uiAccentColor) { newColor in
+                            theme.setUIAccentColor(newColor)
+                        }
+                        .presentationDetents([.fraction(0.47)])
+                        .presentationDragIndicator(.visible)
+                    }
+                }
                 
                 InfoSection(appVersionString: appVersionString)
             }
@@ -90,6 +119,88 @@ struct SettingsView: View {
     }
     
     @AppStorage("settingsBannerDismissed") private var bannerDismissed = false
+}
+
+private struct AccentColorPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var theme: ThemeSettings
+    let selected: Color
+    let onPick: (Color) -> Void
+
+    // 12 pastel colors (3x4 grid)
+    private let pastelColors: [Color] = [
+        Color(red: 0.98, green: 0.68, blue: 0.68), // Rot
+        Color(red: 0.99, green: 0.78, blue: 0.63), // Orange
+        Color(red: 0.99, green: 0.88, blue: 0.60), // Gelb
+        Color(red: 0.97, green: 0.93, blue: 0.65), // Gelb-Grün
+        Color(red: 0.90, green: 0.95, blue: 0.67), // Grün
+        Color(red: 0.80, green: 0.95, blue: 0.72), // Grün-Blau
+        Color(red: 0.72, green: 0.93, blue: 0.78), // Türkis
+        Color(red: 0.64, green: 0.88, blue: 0.88), // Blau-Grün
+        Color(red: 0.64, green: 0.84, blue: 0.92), // Hellblau
+        Color(red: 0.70, green: 0.82, blue: 0.95), // Blau
+        Color(red: 0.75, green: 0.78, blue: 0.98), // Blau-Violett
+        Color(red: 0.80, green: 0.74, blue: 0.97), // Violett
+        Color(red: 0.88, green: 0.78, blue: 0.96), // Rose-Violett
+        Color(red: 0.92, green: 0.82, blue: 0.95), // Rose
+        Color(red: 0.96, green: 0.88, blue: 0.94), // Rosa-Hell
+        Color(red: 0.99, green: 0.96, blue: 0.99)  // Weiß
+    ]
+
+    private let columns: [GridItem] = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 18), count: 4),
+                    spacing: 22
+                ) {
+                    ForEach(pastelColors.indices, id: \.self) { idx in
+                        let color = pastelColors[idx]
+                        Button {
+                            onPick(color)
+                        } label: {
+                            ZStack {
+                                Circle()
+                                    .fill(color)
+                                    .frame(width: 58, height: 58)
+                                if colorsEqual(color, selected) || colorsEqual(color, theme.uiAccentColor) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundStyle(.white.opacity(0.95))
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Farbe \(idx + 1)")
+                    }
+                }
+                .padding(.top, 5)
+                .padding(.bottom, 10)
+                .padding(.horizontal, 8)
+            }
+            .navigationTitle("Akzentfarbe")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .tint(theme.uiAccentColor)
+    
+    }
+
+    private func colorsEqual(_ a: Color, _ b: Color) -> Bool {
+        // Best-effort comparison by converting to UIColor and comparing RGBA
+        #if canImport(UIKit)
+        let ua = UIColor(a)
+        let ub = UIColor(b)
+        var ra: CGFloat = 0, ga: CGFloat = 0, ba: CGFloat = 0, aa: CGFloat = 0
+        var rb: CGFloat = 0, gb: CGFloat = 0, bb: CGFloat = 0, ab: CGFloat = 0
+        ua.getRed(&ra, green: &ga, blue: &ba, alpha: &aa)
+        ub.getRed(&rb, green: &gb, blue: &bb, alpha: &ab)
+        return abs(ra - rb) < 0.01 && abs(ga - gb) < 0.01 && abs(ba - bb) < 0.01 && abs(aa - ab) < 0.01
+        #else
+        return false
+        #endif
+    }
 }
 
 private struct FeedsSection: View {

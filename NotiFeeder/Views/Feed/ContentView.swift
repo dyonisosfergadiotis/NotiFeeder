@@ -101,6 +101,7 @@ struct FeedListView: View {
     @State private var refreshTask: Task<Void, Never>? = nil
     @State private var lastRefreshDate: Date? = nil
     @State private var bookmarkedLinks: Set<String> = []
+    @State private var recentlyReadLinks: Set<String> = []
 
     private let maxArticlesPerFeed = 100
     private var sortIconName: String {
@@ -184,6 +185,19 @@ struct FeedListView: View {
                         }
                     }
                     await refreshTask?.value
+
+                    // Promote recently-read to fully read on refresh
+                    if !recentlyReadLinks.isEmpty {
+                        let links = Array(recentlyReadLinks)
+                        for link in links {
+                            store.setRead(true, articleID: link)
+                            if let idx = entries.firstIndex(where: { $0.link == link }) {
+                                entries[idx].isRead = true
+                            }
+                        }
+                        recentlyReadLinks.removeAll()
+                        persistEntriesCache()
+                    }
                 }
                 .navigationTitle("Feed")
                 .toolbar(content: { feedToolbar })
@@ -294,10 +308,7 @@ struct FeedListView: View {
     @ViewBuilder
     private func navigationDestinationView(_ entry: FeedEntry) -> some View {
         FeedDetailView(entry: entry,
-                       feedColor: feedColor(for: feedSource(for: entry)?.url),
-                       onAppearMarkRead: {
-            markAsRead(entry)
-        })
+                       feedColor: feedColor(for: feedSource(for: entry)?.url))
     }
 
     @ViewBuilder
@@ -314,8 +325,10 @@ struct FeedListView: View {
             return updated
         }()
         let isBookmarked = bookmarkedLinks.contains(detailEntry.link)
+        let isRecentlyRead = recentlyReadLinks.contains(detailEntry.link)
 
         Button {
+            recentlyReadLinks.insert(detailEntry.link)
             path.append(detailEntry)
         } label: {
             ArticleCardView(
@@ -323,13 +336,15 @@ struct FeedListView: View {
                 feedColor: rowFeedColor,
                 title: entry.title,
                 summary: strippedSummary,
-                isRead: entry.isRead,
+                isRead: entry.isRead || isRecentlyRead,
                 date: entryDateValue,
                 isBookmarked: isBookmarked,
                 highlightColor: rowFeedColor
             )
         }
         .buttonStyle(.plain)
+        .listRowBackground(Color(.systemBackground))
+        .background(Color(.systemBackground))
         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
         .listRowSeparator(.hidden)
         //.listRowBackground(Color.clear)
@@ -337,6 +352,7 @@ struct FeedListView: View {
             if entry.isRead {
                 Button {
                     markAsUnread(entry)
+                    recentlyReadLinks.remove(entry.link)
                 } label: {
                     Image(systemName: "circle.dashed")
                 }
@@ -574,20 +590,22 @@ extension FeedListView {
                 cached[index].isRead = store.isRead(articleID: cached[index].link)
             }
             entries = cached
+            recentlyReadLinks.removeAll()
             sortAllEntriesGlobally()
             pruneEntriesForRemovedFeeds()
         }
     }
 
     var filteredEntries: [FeedEntry] {
-        showReadEntries ? entries : entries.filter { !$0.isRead }
+        showReadEntries ? entries : entries.filter { !$0.isRead || recentlyReadLinks.contains($0.link) }
     }
 
     private var hasUnread: Bool {
-        entries.contains { !$0.isRead }
+        entries.contains { !$0.isRead || recentlyReadLinks.contains($0.link) }
     }
 
     func markAsRead(_ entry: FeedEntry) {
+        recentlyReadLinks.remove(entry.link)
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
             withAnimation(.easeInOut(duration: 0.18)) {
                 entries[index].isRead = true
@@ -599,6 +617,7 @@ extension FeedListView {
     }
 
     func markAsUnread(_ entry: FeedEntry) {
+        recentlyReadLinks.remove(entry.link)
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
             withAnimation(.easeInOut(duration: 0.18)) {
                 entries[index].isRead = false
@@ -609,7 +628,7 @@ extension FeedListView {
     }
 
     func markAllAsRead() {
-        let unreadLinks = entries.filter { !$0.isRead }.map { $0.link }
+        let unreadLinks = entries.filter { !$0.isRead }.map { $0.link } + Array(recentlyReadLinks)
         guard !unreadLinks.isEmpty else { return }
         withAnimation(.easeInOut(duration: 0.22)) {
             for index in entries.indices {
@@ -619,6 +638,7 @@ extension FeedListView {
         for link in unreadLinks {
             store.setRead(true, articleID: link)
         }
+        recentlyReadLinks.removeAll()
         persistEntriesCache()
     }
     
@@ -705,3 +725,4 @@ struct EmptyFeedView: View {
         .environmentObject(ThemeSettings())
         .environmentObject(ArticleStore.shared)
 }
+

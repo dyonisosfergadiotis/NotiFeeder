@@ -1,7 +1,6 @@
 import SwiftUI
 
 enum ReaderFontFamily: String, CaseIterable, Identifiable {
-    case system
     case modern
     case serif
     case editorial
@@ -13,20 +12,18 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .system: return "System"
         case .modern: return "Modern"
         case .serif: return "Serif"
         case .editorial: return "Editorial"
         case .rounded: return "Rund"
         case .relaxed: return "Entspannt"
         case .mono: return "Mono"
+        
         }
     }
 
     var cssValue: String {
         switch self {
-        case .system:
-            return "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
         case .modern:
             return "'Avenir Next', 'Segoe UI', 'Helvetica Neue', sans-serif"
         case .serif:
@@ -44,15 +41,16 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
 
     var fontDesign: Font.Design {
         switch self {
-        case .system, .modern: return .default
         case .serif, .editorial, .relaxed: return .serif
         case .rounded: return .rounded
         case .mono: return .monospaced
+        case .modern: return .rounded
         }
     }
 }
 
 struct ReaderSettingsPanel: View {
+    @Binding var textAlignment: String
     @Binding var fontScale: Double
     @Binding var fontFamily: String
     @Binding var lineSpacing: Double
@@ -83,6 +81,20 @@ struct ReaderSettingsPanel: View {
                         Text(String(format: "%.2f", lineSpacing))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section(header: Text("Ausrichtung")) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Ausrichtung", selection: $textAlignment) {
+                            Text("Links").tag("left")
+                            Text("Zentriert").tag("center")
+                            Text("Rechts").tag("right")
+                            Text("Blocksatz").tag("justified")
+                        }
+                        .pickerStyle(.segmented)
+                        
+                        // Helper description
                     }
                 }
 
@@ -120,7 +132,7 @@ struct ReaderSettingsPanel: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .presentationDetents([.medium])
-        .presentationDragIndicator(.hidden)
+        .presentationDragIndicator(.visible)
     }
 
 }

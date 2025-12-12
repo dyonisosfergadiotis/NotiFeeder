@@ -37,6 +37,9 @@ final class ArticleStore: ObservableObject {
     @Published private(set) var articlesByFeed: [String: [StoredFeedArticle]] = [:] // key: feed URL
     @Published private(set) var readArticleIDs: Set<String> = []
 
+    // In-memory short-term cache for recently read articles (not persisted)
+    private(set) var recentlyReadArticleIDs: Set<String> = []
+
     private let defaults: UserDefaults
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -117,5 +120,21 @@ final class ArticleStore: ObservableObject {
 
     func isRead(articleID: String) -> Bool {
         readArticleIDs.contains(articleID)
+    }
+
+    // MARK: Recently Read Articles (short-term, in-memory only)
+    /// Used for short-term tracking of recently read articles that are not yet persisted as permanently read.
+    /// This set is never saved to disk and resets on app restart.
+    func markRecentlyRead(articleID: String) {
+        guard !readArticleIDs.contains(articleID) else { return }
+        recentlyReadArticleIDs.insert(articleID)
+    }
+
+    func clearRecentlyRead() {
+        recentlyReadArticleIDs.removeAll()
+    }
+
+    func isRecentlyRead(articleID: String) -> Bool {
+        recentlyReadArticleIDs.contains(articleID) && !readArticleIDs.contains(articleID)
     }
 }

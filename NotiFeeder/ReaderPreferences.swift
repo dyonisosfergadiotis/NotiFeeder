@@ -54,6 +54,7 @@ struct ReaderSettingsPanel: View {
     @Binding var fontScale: Double
     @Binding var fontFamily: String
     @Binding var lineSpacing: Double
+    @Binding var feedColor: Color
 
     private var fontGridColumns: [GridItem] {
         [GridItem(.adaptive(minimum: 110), spacing: 10)]
@@ -67,6 +68,7 @@ struct ReaderSettingsPanel: View {
                         Slider(value: $fontScale, in: 0.85...1.5, step: 0.05) {
                             Text("Schriftgröße")
                         }
+                        .tint(feedColor)
                         Text("\(Int(fontScale * 100)) %")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -78,6 +80,7 @@ struct ReaderSettingsPanel: View {
                         Slider(value: $lineSpacing, in: 1.2...2.0, step: 0.05) {
                             Text("Zeilenabstand")
                         }
+                        .tint(feedColor)
                         Text(String(format: "%.2f", lineSpacing))
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
@@ -118,7 +121,7 @@ struct ReaderSettingsPanel: View {
                                 .padding(.horizontal, 6)
                                 .background(
                                     RoundedRectangle(cornerRadius: 10)
-                                        .stroke(fontFamily == option.rawValue ? Color.accentColor : Color.secondary.opacity(0.45), lineWidth: fontFamily == option.rawValue ? 2 : 1)
+                                        .stroke(fontFamily == option.rawValue ? feedColor : Color.secondary.opacity(0.45), lineWidth: fontFamily == option.rawValue ? 2 : 1)
                                 )
                             }
                             .buttonStyle(.plain)

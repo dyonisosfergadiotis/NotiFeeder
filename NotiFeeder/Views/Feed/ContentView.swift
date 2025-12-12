@@ -277,6 +277,7 @@ struct FeedListView: View {
                 .accessibilityLabel(showReadEntries ? "Gelesene ausblenden" : "Gelesene anzeigen")
 
                 Menu {
+                    Text("Sortieren nach:")
                     Button {
                         guard sortOption != "Neueste zuerst" else { return }
                         withAnimation(.easeInOut(duration: 0.2)) {

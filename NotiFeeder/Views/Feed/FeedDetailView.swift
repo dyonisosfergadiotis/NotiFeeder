@@ -4,6 +4,27 @@ import FoundationModels
 import Foundation
 import SwiftData
 
+extension Color {
+    var rgbComponents: (red: Int, green: Int, blue: Int)? {
+        #if canImport(UIKit)
+        typealias NativeColor = UIColor
+        #elseif canImport(AppKit)
+        typealias NativeColor = NSColor
+        #endif
+
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+
+        guard NativeColor(self).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
+            return nil
+        }
+
+        return (Int(red * 255), Int(green * 255), Int(blue * 255))
+    }
+}
+
 struct FeedDetailView: View {
     var entry: FeedEntry
     var feedColor: Color?
@@ -15,7 +36,11 @@ struct FeedDetailView: View {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
-        return WKWebView(frame: .zero, configuration: config)
+        
+        let wv = WKWebView(frame: .zero, configuration: config)
+            wv.scrollView.showsVerticalScrollIndicator = false
+            wv.scrollView.showsHorizontalScrollIndicator = false
+            return wv
     }()
     @State private var shareText: String = ""
     @State private var activeSheet: ActiveSheet?
@@ -48,9 +73,9 @@ struct FeedDetailView: View {
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
-                Text("von \(entry.author ?? "Unknown")")
+                Text("von \(entry.author ?? "Unbekannt")")
                 Text("·")
-                Text(entry.sourceTitle ?? "Quelle")
+                Text(entry.sourceTitle ?? "Unbekannte Quelle")
             }
             .font(.subheadline)
             .foregroundColor(.secondary)
@@ -70,10 +95,11 @@ struct FeedDetailView: View {
         .padding()
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
         .background(
-            LinearGradient(colors: [headerTint.opacity(0.24), Color(.systemBackground)],
-                           startPoint: .top,
-                           endPoint: .bottom)
-                .opacity(0.9)
+            LinearGradient(
+                colors: [headerTint.opacity(0.3), (feedColor ?? .primary).opacity(0.15)],
+                        startPoint: .top,
+                        endPoint: .bottom)
+                .opacity(1)
         )
     }
 
@@ -177,7 +203,8 @@ struct FeedDetailView: View {
                     ReaderSettingsPanel(textAlignment: $readerTextAlignmentRaw,
                                         fontScale: $readerFontScale,
                                         fontFamily: $readerFontFamily,
-                                        lineSpacing: $readerLineSpacing)
+                                        lineSpacing: $readerLineSpacing,
+                                        feedColor: .constant(feedColor ?? theme.uiAccentColor))
                     .presentationDetents([.fraction(0.44)]) // <— hier
                     .presentationDragIndicator(.visible)
                 }
@@ -222,12 +249,30 @@ struct FeedDetailView: View {
             textAlignCSS = "left"
             textJustifyCSS = "auto"
         }
+        
+        let rgb = (feedColor ?? theme.uiAccentColor).rgbComponents ?? (0,0,0)
+        // Beispiel: Wenn rgb = (200, 150, 100)
+
+
+        // Erstelle den fertigen CSS-String im rgba-Format mit Opazität 0.9
+        let darkBackground: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.15)"
+        // Ergebnis für das Beispiel: "rgba(170, 120, 70, 0.9)"
+        // For light mode background: original color with lighter alpha
+        let lightBackground = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.15)"
+        // Text color for dark mode: keep #EAEAEA as light text
+        let darkTextColor = "#EAEAEA"
+        // Text color for light mode: dark text
+        let lightTextColor = "#111111"
+        // Link color: use accentHex for consistency
+        let linkColor = feedColor?.description ?? theme.uiAccentHexString
 
         return  """
         <html>
           <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
+        
+        
               body {
                 font-family: \(fontFamilyCSS);
                 font-size: \(fontSize)px;
@@ -240,18 +285,24 @@ struct FeedDetailView: View {
         
               @media (prefers-color-scheme: dark) {
                 body {
-                  background-color: #000000;
-                  color: #EAEAEA;
+                  background-color: \(darkBackground);
+                  color: \(darkTextColor);
                 }
-                a { color: \(accentHex); }
+                a { color: \(linkColor); }
+                html {
+                 background-color: #000000;
+                }
               }
         
               @media (prefers-color-scheme: light) {
                 body {
-                  background-color: #FFFFFF;
-                  color: #111111;
+                  background-color: \(lightBackground);
+                  color: \(lightTextColor);
                 }
-                a { color: \(accentHex); }
+                a { color: \(linkColor); }
+                html {
+                 background-color: #ffffff;
+                }
               }
         
               ul, ol {
@@ -360,3 +411,10 @@ struct ActivityView: UIViewControllerRepresentable {
         .environmentObject(ArticleStore.shared)
 }
  
+
+// Gibt einen halbtransparenten rgba-Overlay-String für Dark Mode zurück, etwa: "rgba(100, 80, 60, 0.1)"
+// Beispiel der Nutzung:
+//   let css = generateDarkTintOverlayCSS(from: (100, 80, 60)) // => "rgba(100, 80, 60, 0.1)"
+private func generateDarkTintOverlayCSS(from rgb: (Int, Int, Int)) -> String {
+    return "rgba(\(rgb.0), \(rgb.1), \(rgb.2), 0.1)"
+}

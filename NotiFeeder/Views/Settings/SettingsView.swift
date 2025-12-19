@@ -151,7 +151,7 @@ private struct AccentColorPickerSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            VStack {
                 LazyVGrid(
                     columns: Array(repeating: GridItem(.flexible(), spacing: 18), count: 4),
                     spacing: 22
@@ -176,15 +176,15 @@ private struct AccentColorPickerSheet: View {
                         .accessibilityLabel("Farbe \(idx + 1)")
                     }
                 }
-                .padding(.top, 5)
+                .padding(.top, 7.5)
                 .padding(.bottom, 10)
                 .padding(.horizontal, 8)
+                Spacer()
             }
             .navigationTitle("Akzentfarbe")
             .navigationBarTitleDisplayMode(.inline)
         }
         .tint(theme.uiAccentColor)
-    
     }
 
     private func colorsEqual(_ a: Color, _ b: Color) -> Bool {

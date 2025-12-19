@@ -26,19 +26,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
 
-        // Benachrichtigungserlaubnis
-
-        // Background Task registrieren
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: "de.dyonisos.NotiFeeder.refresh", using: nil) { [self] task in
-            Task {
-                // Fetch new entries and merge into persistent store
-                let feeds = self.loadFeedsFromStorage()
-                await FeedBackgroundFetcher.shared.checkForNewEntries(feeds: feeds)
-                task.setTaskCompleted(success: true)
-            }
-            self.scheduleNextFetch()
-        }
-
         self.scheduleNextFetch()
         _ = ArticleStore.shared
         return true

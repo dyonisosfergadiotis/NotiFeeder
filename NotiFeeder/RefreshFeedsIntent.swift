@@ -12,10 +12,6 @@ struct RefreshFeedsIntent: AppIntent {
             return .result(value: "Keine Feeds gefunden")
         }
 
-        Task.detached(priority: .background) {
-            await FeedBackgroundFetcher.shared.checkForNewEntries(feeds: feeds)
-        }
-
         return .result(value: "Feeds werden geprüft")
     }
 

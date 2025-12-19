@@ -11,6 +11,8 @@ struct ArticleCardView: View {
     let isBookmarked: Bool
     let highlightTerm: String?
     let highlightColor: Color
+    let previewLineCount: Int
+    let useFullColorBackground: Bool
 
     init(feedTitle: String,
          feedColor: Color,
@@ -20,7 +22,9 @@ struct ArticleCardView: View {
          date: Date?,
          isBookmarked: Bool,
          highlightTerm: String? = nil,
-         highlightColor: Color = .accentColor) {
+         highlightColor: Color = .accentColor,
+         previewLineCount: Int = 3,
+         useFullColorBackground: Bool = false) {
         self.feedTitle = feedTitle
         self.feedColor = feedColor
         self.title = title
@@ -30,6 +34,8 @@ struct ArticleCardView: View {
         self.isBookmarked = isBookmarked
         self.highlightTerm = highlightTerm
         self.highlightColor = highlightColor
+        self.previewLineCount = previewLineCount
+        self.useFullColorBackground = useFullColorBackground
     }
 
     private var hasSummary: Bool {
@@ -85,7 +91,7 @@ struct ArticleCardView: View {
                         if hasSummary, let summary {
                             highlightableText(for: summary, baseColor: summaryColor)
                                 .appSecondary()
-                                .lineLimit(3)
+                                .lineLimit(previewLineCount)
                         }
                     }
                     .padding(.leading, 10)
@@ -124,11 +130,14 @@ struct ArticleCardView: View {
     }
 
     private var cardBackground: Color {
-        isRead ? Color(feedColor).opacity(0.15) : Color(feedColor).opacity(0.5)
+        if !useFullColorBackground {
+            return Color(feedColor).opacity(0.12)
+        }
+        return isRead ? Color(feedColor).opacity(0.15) : Color(feedColor).opacity(0.5)
     }
     
     private var pillBackground: Color {
-        isRead ? Color(feedColor).opacity(0.5) : Color("#E5E5E7")
+        !isRead ? Color(feedColor).opacity(0.5) : Color("#E5E5E7")
     }
 
     private func highlightableText(for content: String, baseColor: Color) -> Text {

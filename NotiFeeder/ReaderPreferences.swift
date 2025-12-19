@@ -81,7 +81,7 @@ struct ReaderSettingsPanel: View {
                             Text("Zeilenabstand")
                         }
                         .tint(feedColor)
-                        Text(String(format: "%.2f", lineSpacing))
+                        Text(String(format: "%.2f", lineSpacing) + " pt")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }

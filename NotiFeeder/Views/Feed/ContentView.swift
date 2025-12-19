@@ -2,73 +2,89 @@ import SwiftUI
 import Foundation
 import FoundationModels
 import SwiftData
-
-// Annahme: Die DateParser- und DateFormatter-Extension aus der vorherigen Antwort
-// ist in einer separaten Datei (z.B. DateUtils.swift) vorhanden.
-
-// ----------------------------------------------------------------------
-// WICHTIG: Ersetze die DateParser.parse(from:) durch Deine tatsächliche Funktion.
-// HIER WIRD DIE ERSETZTE DATEUTILS-LOGIK ALS PLAUSIBEL ANGENOMMEN.
-// ----------------------------------------------------------------------
-// Hier ist ein Platzhalter für DateParser, falls er nicht im gleichen File ist.
-// Wenn DateParser im selben File wie die Extension ist, ignoriere diesen Block.
-/*
-struct DateParser {
-    static func parse(_ dateString: String?) -> Date {
-        guard let s = dateString else { return Date.distantPast }
-        // 1. ISO8601 Check
-        if s.contains("-") && s.contains(":") {
-            if let isoDate = ISO8601DateFormatter().date(from: s) {
-                return isoDate
-            }
-        }
-        // 2. YYYY Check
-        if s.range(of: "\\s\\d{4}", options: .regularExpression) != nil {
-            if let date = DateFormatter.rfc822.date(from: s) {
-                return date
-            }
-        }
-        // 3. YY Fallback
-        if let date = DateFormatter.rfc822TwoDigitYear.date(from: s) {
-            return date
-        }
-        return Date.distantPast
-    }
-}
-*/
-// ----------------------------------------------------------------------
-
+import Network
 
 struct ContentView: View {
     @AppStorage("savedFeeds") private var savedFeedsData: Data = Data()
     @AppStorage("cachedEntries") private var cachedEntriesData: Data = Data()
     @State private var feeds: [FeedSource] = []
     @EnvironmentObject private var theme: ThemeSettings
+    @State private var showOnboarding: Bool = false
+    @AppStorage("didRunOnboarding") private var didRunOnboarding: Bool = false
     
+    @State private var showFeedsSettingsSheet: Bool = false
+    @State private var showPersonalizationSheet: Bool = false
+    @State private var showInfoSheet: Bool = false
+    
+    @State private var searchText: String = ""
+    
+    
+    @StateObject private var networkState = NetworkState()
+    private let pathMonitor = NWPathMonitor()
+    private let pathQueue = DispatchQueue(label: "NetworkPathMonitorQueue")
+    
+
     var body: some View {
-        TabView {
-            Tab("Feed", systemImage: "list.bullet") {
-                FeedListView(feeds: $feeds, savedFeedsData: $savedFeedsData)
-            }
-            
-            Tab(role: .search) {
-                    SearchView()
-            }
-            
-            Tab("Lesezeichen", systemImage: "bookmark") {
-                BookmarksView()
-            }
-            
-            Tab("Einstellungen", systemImage: "gear") {
-                SettingsView(feeds: $feeds, savedFeedsData: $savedFeedsData)
-                
-            }
+        VStack {
+            FeedListView(
+                feeds: $feeds,
+                savedFeedsData: $savedFeedsData,
+                showFeedsSettingsSheet: $showFeedsSettingsSheet,
+                showPersonalizationSheet: $showPersonalizationSheet,
+                showInfoSheet: $showInfoSheet,
+                searchText: $searchText
+            )
         }
-        .tabViewStyle(.automatic)
-        .tabBarMinimizeBehavior(.onScrollDown)
+        .environmentObject(networkState)
         .tint(theme.uiAccentColor)
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Artikel suchen")
+        .sheet(isPresented: $showOnboarding) {
+            let vm = OnboardingViewModel()
+            OnboardingFlowView(viewModel: vm) { produced in
+                if let produced = produced {
+                    // Save produced feed to savedFeedsData
+                    var current = (try? JSONDecoder().decode([FeedSource].self, from: savedFeedsData)) ?? []
+                    current.append(produced)
+                    if let data = try? JSONEncoder().encode(current) {
+                        savedFeedsData = data
+                        feeds = current
+                    }
+                }
+                showOnboarding = false
+                didRunOnboarding = true
+            }
+            .environmentObject(theme)
+            .presentationDetents([.large])
+        }
         .onAppear {
+            didRunOnboarding = false
             loadFeeds()
+            if !didRunOnboarding && feeds.isEmpty {
+                showOnboarding = true
+            }
+            // Start network monitoring
+            pathMonitor.pathUpdateHandler = { path in
+                DispatchQueue.main.async {
+                    networkState.isOffline = (path.status != .satisfied)
+                }
+            }
+            pathMonitor.start(queue: pathQueue)
+        }
+        .onDisappear {
+            pathMonitor.cancel()
+        }
+        .sheet(isPresented: $showFeedsSettingsSheet) {
+            FeedsSettingsViewPlaceholder()
+                .presentationDetents([.fraction(0.45)])
+        }
+        .sheet(isPresented: $showPersonalizationSheet) {
+            PersonalizationViewPlaceholder()
+                .environmentObject(theme)
+                .presentationDetents([.fraction(0.45)])
+        }
+        .sheet(isPresented: $showInfoSheet) {
+            InfoViewPlaceholder()
+                .presentationDetents([.fraction(0.45)])
         }
     }
     
@@ -85,10 +101,18 @@ struct ContentView: View {
 struct FeedListView: View {
     @Binding var feeds: [FeedSource]
     @Binding var savedFeedsData: Data
+    @Binding var showFeedsSettingsSheet: Bool
+    @Binding var showPersonalizationSheet: Bool
+    @Binding var showInfoSheet: Bool
+    @Binding var searchText: String
     @EnvironmentObject private var store: ArticleStore
     @EnvironmentObject private var theme: ThemeSettings
+    @EnvironmentObject private var networkState: NetworkState
     @Environment(\.modelContext) private var modelContext
     @AppStorage("cachedEntries") private var cachedEntriesData: Data = Data()
+    
+    @AppStorage("ui.cards.previewLines") private var previewLines: Int = 3
+    @AppStorage("ui.cards.style.fullColor") private var fullColorCards: Bool = false
     
     @State private var entries: [FeedEntry] = []
     @State private var isLoading = false
@@ -97,17 +121,21 @@ struct FeedListView: View {
     @State private var didTriggerInitialLoad = false
     @State private var path: [FeedEntry] = []
     @State private var didRestoreCachedEntries = false
+    
+    @State private var showBookmarksSheet: Bool = false
 
     @State private var refreshTask: Task<Void, Never>? = nil
     @State private var lastRefreshDate: Date? = nil
     @State private var bookmarkedLinks: Set<String> = []
-    @State private var recentlyReadLinks: Set<String> = []
+    @State private var recentlyReadLinks: Set<String> = [] // Tracks items opened this session; items are READ + RECENT, visible until next refresh/app open
+    
+    @State private var showSearchSheet: Bool = false
+    
 
     private let maxArticlesPerFeed = 100
     private var sortIconName: String {
         sortOption == "Neueste zuerst" ? "arrow.down.circle" : "arrow.up.circle"
     }
-    
     // 🥇 KORRIGIERTE FUNKTION 1: Verwendet DateParser.parse()
     private func sortAllEntriesGlobally() {
         // 1. Alle Einträge global nach Datum sortieren
@@ -200,7 +228,14 @@ struct FeedListView: View {
                     }
                 }
                 .navigationTitle("Feed")
+                .if(networkState.isOffline) { view in
+                    view.navigationSubtitle("Offline")
+                }
                 .toolbar(content: { feedToolbar })
+                .sheet(isPresented: $showBookmarksSheet) {
+                    BookmarksView()
+                }
+                //.sheet for other sheets moved to ContentView to avoid multiple sheets on same view
                 .navigationDestination(for: FeedEntry.self) { entry in
                     navigationDestinationView(entry)
                 }
@@ -242,80 +277,148 @@ struct FeedListView: View {
         }
     }
     
+    @ToolbarContentBuilder
     private var feedToolbar: some ToolbarContent {
-        Group {
+        if #available(iOS 26, *) {
+                DefaultToolbarItem(
+                    kind: .search,
+                    placement: .bottomBar
+                )
+
+                ToolbarSpacer(
+                    .flexible,
+                    placement: .bottomBar
+                )
             
             // Gruppe 1: Ungelesen-Button
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                if hasUnread {
+            ToolbarItemGroup(placement: .bottomBar) {
+                
                     Button {
-                        markAllAsRead()
+                        showBookmarksSheet = true
                     } label: {
-                        Image(systemName: "checkmark.circle.fill")
+                        Image(systemName: "bookmark")
                     }
                     .tint(theme.uiAccentColor)
-                    .accessibilityLabel("Alle ungelesenen als gelesen markieren")
                 }
+            
             }
+        
+        
+        ToolbarItemGroup(placement: .topBarLeading) {
+            Menu {
+                Button {
+                    showFeedsSettingsSheet = true
+                } label: {
+                    Label("Feeds", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+                Button {
+                    showPersonalizationSheet = true
+                } label: {
+                    Label("Personalisierung", systemImage: "paintbrush")
+                }
+                Button {
+                    showInfoSheet = true
+                } label: {
+                    Label("Info", systemImage: "info.circle")
+                }
+            } label: {
+                Image(systemName: "gear")
+                    .symbolRenderingMode(.hierarchical)
+            }
+            .tint(theme.uiAccentColor)
+        }
+        
+        
 
-            // Echter ToolbarSpacer auf Top-Level
-            ToolbarSpacer(.fixed, placement: .topBarTrailing)
+        // Gruppe 2: Filter + Menü
+        ToolbarItemGroup(placement: .topBarTrailing) {
 
-            // Gruppe 2: Filter + Menü
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            Button {
+                showReadEntries.toggle()
+            } label: {
+                Image(systemName: showReadEntries
+                      ? "line.3.horizontal.decrease.circle"
+                      : "line.3.horizontal.decrease.circle.fill")
+            }
+            .contentTransition(.symbolEffect)
+            .animation(.easeInOut(duration: 0.2), value: showReadEntries)
+            .tint(theme.uiAccentColor)
+            .accessibilityLabel(showReadEntries ? "Gelesene ausblenden" : "Gelesene anzeigen")
+
+            Menu {
+                Text("Sortieren nach:")
+                Button {
+                    guard sortOption != "Neueste zuerst" else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        sortOption = "Neueste zuerst"
+                    }
+                } label: {
+                    Label("Neueste zuerst", systemImage: "arrow.down.circle")
+                        .labelStyle(.titleAndIcon)
+                }
 
                 Button {
-                    showReadEntries.toggle()
-                } label: {
-                    Image(systemName: showReadEntries
-                          ? "line.3.horizontal.decrease.circle"
-                          : "line.3.horizontal.decrease.circle.fill")
-                }
-                .contentTransition(.symbolEffect)
-                .animation(.easeInOut(duration: 0.2), value: showReadEntries)
-                .tint(theme.uiAccentColor)
-                .accessibilityLabel(showReadEntries ? "Gelesene ausblenden" : "Gelesene anzeigen")
-
-                Menu {
-                    Text("Sortieren nach:")
-                    Button {
-                        guard sortOption != "Neueste zuerst" else { return }
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            sortOption = "Neueste zuerst"
-                        }
-                    } label: {
-                        Label("Neueste zuerst", systemImage: "arrow.down.circle")
-                            .labelStyle(.titleAndIcon)
+                    guard sortOption != "Älteste zuerst" else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        sortOption = "Älteste zuerst"
                     }
-
-                    Button {
-                        guard sortOption != "Älteste zuerst" else { return }
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            sortOption = "Älteste zuerst"
-                        }
-                    } label: {
-                        Label("Älteste zuerst", systemImage: "arrow.up.circle")
-                            .labelStyle(.titleAndIcon)
-                    }
-
                 } label: {
-                    Image(systemName: sortIconName)
+                    Label("Älteste zuerst", systemImage: "arrow.up.circle")
+                        .labelStyle(.titleAndIcon)
                 }
-                .tint(theme.uiAccentColor)
+
+            } label: {
+                Image(systemName: sortIconName)
             }
+            .tint(theme.uiAccentColor)
+        } // <- Ende ToolbarItemGroup topBarTrailing
+    } // <- Ende feedToolbar
+    
+    private var unreadCount: Int {
+        // Summe aller ungelesenen Artikel in allen Feeds
+        // Wir holen die gecachten Einträge und zählen die ungelesenen
+        if let decoded = try? JSONDecoder().decode([FeedEntry].self, from: cachedEntriesData) {
+            return decoded.filter { !$0.isRead }.count
         }
+        return 0
     }
     
     @ViewBuilder
     private func navigationDestinationView(_ entry: FeedEntry) -> some View {
-        FeedDetailView(entry: entry,
-                       feedColor: feedColor(for: feedSource(for: entry)?.url))
+        FeedDetailView(
+            entry: entry,
+            feedColor: feedColor(for: feedSource(for: entry)?.url),
+            entriesProvider: { filteredEntries },
+            onNavigateToEntry: { newEntry, _ in
+                withAnimation(.smooth(duration: 0.22)) {
+                    var newDetail = newEntry
+                    // Derive feed info for consistency
+                    newDetail.sourceTitle = feedTitle(for: newEntry)
+                    newDetail.feedURL = feedSource(for: newEntry)?.url
+
+                    if !newEntry.isRead {
+                        recentlyReadLinks.insert(newDetail.link)
+                        store.setRead(true, articleID: newDetail.link)
+                        if let idx = entries.firstIndex(where: { $0.link == newDetail.link }) {
+                            entries[idx].isRead = true
+                            persistEntriesCache()
+                        }
+                    }
+
+                    if !path.isEmpty {
+                        path[path.count - 1] = newDetail
+                    } else {
+                        path.append(newDetail)
+                    }
+                }
+            }
+        )
     }
 
     @ViewBuilder
     private func entryRow(for entry: FeedEntry) -> some View {
         let matchedFeed = feedSource(for: entry)
-        let feedName = matchedFeed?.title ?? feedTitle(for: entry)
+        let feedName = feedTitle(for: entry)
         let rowFeedColor = feedColor(for: matchedFeed?.url)
         let entryDateValue = entryDate(for: entry)
         let strippedSummary = HTMLText.stripHTML(entry.content)
@@ -329,7 +432,15 @@ struct FeedListView: View {
         let isRecentlyRead = recentlyReadLinks.contains(detailEntry.link)
 
         Button {
-            recentlyReadLinks.insert(detailEntry.link)
+            // Opening an unread item -> becomes read + recently; if already read, never becomes recently again
+            if !entry.isRead {
+                recentlyReadLinks.insert(detailEntry.link)
+                store.setRead(true, articleID: detailEntry.link)
+                if let idx = entries.firstIndex(where: { $0.link == detailEntry.link }) {
+                    entries[idx].isRead = true
+                    persistEntriesCache()
+                }
+            }
             path.append(detailEntry)
         } label: {
             ArticleCardView(
@@ -340,7 +451,24 @@ struct FeedListView: View {
                 isRead: entry.isRead || isRecentlyRead,
                 date: entryDateValue,
                 isBookmarked: isBookmarked,
-                highlightColor: rowFeedColor
+                highlightTerm: searchText.isEmpty ? nil : searchText,
+                highlightColor: rowFeedColor,
+                previewLineCount: previewLines,
+                useFullColorBackground: fullColorCards
+            )
+            .background(Color(.systemBackground))
+            .overlay(
+                Group {
+                    if !fullColorCards {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(
+                                (entry.isRead || isRecentlyRead)
+                                    ? rowFeedColor.opacity(0.2)
+                                    : rowFeedColor.opacity(0.6),
+                                lineWidth: 1
+                            )
+                    }
+                }
             )
         }
         .buttonStyle(.plain)
@@ -348,17 +476,20 @@ struct FeedListView: View {
         .background(Color(.systemBackground))
         .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
         .listRowSeparator(.hidden)
+        
         //.listRowBackground(Color.clear)
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             if entry.isRead {
-                Button {
-                    markAsUnread(entry)
-                    recentlyReadLinks.remove(entry.link)
-                } label: {
-                    Image(systemName: "circle.dashed")
+                // If it's recently read, do not allow making it unread
+                if !recentlyReadLinks.contains(entry.link) {
+                    Button {
+                        markAsUnread(entry)
+                    } label: {
+                        Image(systemName: "circle.dashed")
+                    }
+                    .accessibilityLabel("Als ungelesen markieren")
+                    .tint(theme.uiSwipeColor)
                 }
-                .accessibilityLabel("Als ungelesen markieren")
-                .tint(theme.uiSwipeColor)
             } else {
                 Button {
                     markAsRead(entry)
@@ -456,7 +587,6 @@ extension FeedListView {
                         StoredFeedArticle(
                             title: entry.title,
                             link: entry.link,
-                            // 🥇 KORRIGIERTE FUNKTION 2: Verwendet DateParser.parse()
                             publishedAt: entry.pubDateString.flatMap { DateParser.parse($0) },
                             summary: HTMLText.stripHTML(entry.content),
                             feedTitle: feed.title
@@ -598,27 +728,38 @@ extension FeedListView {
     }
 
     var filteredEntries: [FeedEntry] {
-        showReadEntries ? entries : entries.filter { !$0.isRead || recentlyReadLinks.contains($0.link) }
+        if !searchText.isEmpty {
+            let q = searchText.lowercased()
+            return entries.filter { entry in
+                let title = entry.title.lowercased()
+                let summary = HTMLText.stripHTML(entry.content).lowercased()
+                let author = (entry.author ?? "").lowercased()
+                return title.contains(q) || summary.contains(q) || author.contains(q)
+            }
+        } else if showReadEntries {
+            return entries
+        } else {
+            return entries.filter { !$0.isRead || recentlyReadLinks.contains($0.link) }
+        }
     }
 
     private var hasUnread: Bool {
-        entries.contains { !$0.isRead || recentlyReadLinks.contains($0.link) }
+        entries.contains { !$0.isRead && !recentlyReadLinks.contains($0.link) }
     }
 
     func markAsRead(_ entry: FeedEntry) {
-        recentlyReadLinks.remove(entry.link)
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
             withAnimation(.easeInOut(duration: 0.18)) {
                 entries[index].isRead = true
             }
             store.setRead(true, articleID: entry.link)
-
             persistEntriesCache()
         }
     }
 
     func markAsUnread(_ entry: FeedEntry) {
-        recentlyReadLinks.remove(entry.link)
+        // From recently read you cannot go back to unread
+        guard !recentlyReadLinks.contains(entry.link) else { return }
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
             withAnimation(.easeInOut(duration: 0.18)) {
                 entries[index].isRead = false
@@ -662,18 +803,48 @@ extension FeedListView {
 
 
     func feedTitle(for entry: FeedEntry) -> String {
-        feedSource(for: entry)?.title ?? "Unbekannte Quelle"
+        if let explicit = entry.sourceTitle, !explicit.isEmpty {
+            return explicit
+        }
+        return feedSource(for: entry)?.title ?? "Unbekannte Quelle"
     }
 
     func feedSource(for entry: FeedEntry) -> FeedSource? {
+        // 1) If the entry already carries its feedURL, try to match directly
+        if let entryFeedURL = entry.feedURL, let entryFeedHost = URL(string: entryFeedURL)?.host?.lowercased() {
+            if let direct = feeds.first(where: { URL(string: $0.url)?.host?.lowercased() == entryFeedHost }) {
+                return direct
+            }
+        }
+
+        // 2) Try to match by the article link's base domain against the feed's base domain
         guard
             let articleHost = URL(string: entry.link)?.host,
             let articleDomain = baseDomain(from: articleHost)
-        else { return nil }
+        else {
+            // 3) As a last resort, try strict host equality between article link and feed url
+            for feed in feeds {
+                if let fHost = URL(string: feed.url)?.host?.lowercased(),
+                   let aHost = URL(string: entry.link)?.host?.lowercased(),
+                   fHost == aHost {
+                    return feed
+                }
+            }
+            return nil
+        }
 
         for feed in feeds {
             let feedHost = URL(string: feed.url)?.host
             if let feedDomain = baseDomain(from: feedHost), feedDomain == articleDomain {
+                return feed
+            }
+        }
+
+        // 3) As a final fallback, attempt strict host equality
+        for feed in feeds {
+            if let fHost = URL(string: feed.url)?.host?.lowercased(),
+               let aHost = URL(string: entry.link)?.host?.lowercased(),
+               fHost == aHost {
                 return feed
             }
         }
@@ -718,6 +889,360 @@ struct EmptyFeedView: View {
         //    RoundedRectangle(cornerRadius: 22, style: .continuous)
         //        .fill(theme.uiAccentColor.opacity(0.12))
         //)
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
+    }
+}
+
+// REPLACED FeedsSettingsViewPlaceholder with enhanced version
+struct FeedsSettingsViewPlaceholder: View {
+    @AppStorage("savedFeeds") private var savedFeedsData: Data = Data()
+    @State private var feeds: [FeedSource] = []
+    @State private var isEditing: Bool = false
+    @State private var showAddFeedSheet: Bool = false
+    
+    @State private var showEditFeedSheet: Bool = false
+    @State private var editingIndex: Int? = nil
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("") {
+                    if feeds.isEmpty {
+                        Label("Noch keine Feeds hinzugefügt", systemImage: "tray")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(feeds, id: \.url) { feed in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(feed.title).font(.body)
+                                    Text(feed.url).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
+                            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                                Button {
+                                    if let idx = feeds.firstIndex(where: { $0.url == feed.url }) {
+                                        editingIndex = idx
+                                        showEditFeedSheet = true
+                                    }
+                                } label: {
+                                    Image(systemName: "pencil")
+                                }
+                                .tint(Color.accentColor)
+                                .accessibilityLabel("Feed bearbeiten")
+                            }
+                        }
+                        .onDelete(perform: deleteFeeds)
+                        .onMove(perform: moveFeeds)
+                    }
+                    Button {
+                        showAddFeedSheet = true
+                    } label: {
+                        Label("Feed hinzufügen", systemImage: "plus")
+                    }
+                }
+            }
+            .navigationTitle("Feeds")
+            .navigationBarTitleDisplayMode(.inline)
+            .sheet(isPresented: $showAddFeedSheet) {
+                AddSingleFeedView { newItem in
+                    guard let item = newItem else { return }
+                    feeds.append(item)
+                    persistFeeds()
+                }
+                .presentationDetents([.fraction(0.5)])
+            }
+            .sheet(isPresented: $showEditFeedSheet) {
+                if let idx = editingIndex, feeds.indices.contains(idx) {
+                    EditSingleFeedView(feed: feeds[idx]) { updated in
+                        guard let updated = updated else { return }
+                        feeds[idx] = updated
+                        persistFeeds()
+                    }
+                }
+            }
+            .onAppear(perform: restoreFeeds)
+        }
+    }
+
+    private func restoreFeeds() {
+        if let decoded = try? JSONDecoder().decode([FeedSource].self, from: savedFeedsData) {
+            feeds = decoded
+        }
+    }
+
+    private func persistFeeds() {
+        if let data = try? JSONEncoder().encode(feeds) {
+            savedFeedsData = data
+        }
+    }
+
+    private func deleteFeeds(at offsets: IndexSet) {
+        feeds.remove(atOffsets: offsets)
+        persistFeeds()
+    }
+
+    private func moveFeeds(from source: IndexSet, to destination: Int) {
+        feeds.move(fromOffsets: source, toOffset: destination)
+        persistFeeds()
+    }
+}
+
+// New helper view for adding a single feed
+struct AddSingleFeedView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String = ""
+    @State private var urlString: String = ""
+    @State private var selectedColor: Color = Color(red: 0.78, green: 0.88, blue: 0.97)
+    let onAdd: (FeedSource?) -> Void
+
+    private let presetColors: [Color] = [
+        Color(red: 0.98, green: 0.80, blue: 0.80), // pastel red
+        Color(red: 0.99, green: 0.88, blue: 0.73), // pastel orange
+        Color(red: 0.99, green: 0.97, blue: 0.76), // pastel yellow
+        Color(red: 0.80, green: 0.93, blue: 0.82), // pastel green
+        Color(red: 0.78, green: 0.88, blue: 0.97), // pastel blue
+        Color(red: 0.86, green: 0.80, blue: 0.96)  // pastel purple
+    ]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Details") {
+                    TextField("Name", text: $title)
+                        .textInputAutocapitalization(.words)
+                    TextField("Feed URL", text: $urlString)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .autocorrectionDisabled(true)
+                }
+
+                Section("Farbe") {
+                    // Preset colors and ColorPicker inline horizontally, spaced from edges with Spacer
+                    HStack(spacing: 12) { // Einheitlicher Abstand für alle Elemente
+                        Spacer(minLength: 0)
+
+                        // Preset Farben
+                        ForEach(presetColors, id: \.self) { color in
+                            ZStack {
+                                Circle()
+                                    .fill(color)
+                                    .frame(width: 28, height: 28)
+                                
+                                if color.description == selectedColor.description {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2.bold()) // Etwas fetter wirkt oft hochwertiger
+                                        .foregroundStyle(.black.opacity(0.7))
+                                }
+                            }
+                            .contentShape(Circle()) // Verbessert die Treffzone für Taps
+                            .onTapGesture {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    selectedColor = color
+                                }
+                            }
+                        }
+
+                        // Der ColorPicker direkt daneben
+                        ColorPicker("", selection: $selectedColor, supportsOpacity: false)
+                            .labelsHidden()
+                            .fixedSize() // Verhindert, dass der Picker unnötig Platz einnimmt
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .navigationTitle("Feed hinzufügen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() }label:{Image(systemName: "xmark")}
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard let url = URL(string: trimmedURL), !trimmedURL.isEmpty else {
+                            onAdd(nil)
+                            dismiss()
+                            return
+                        }
+                        let name = title.isEmpty ? trimmedURL : title
+                        // NOTE: Persisting color per feed requires ThemeSettings support; here we just emit the feed.
+                        let feed = FeedSource(title: name, url: url.absoluteString)
+                        onAdd(feed)
+                        dismiss()
+                    }label:{Image(systemName: "checkmark")}
+                    .disabled(urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+struct EditSingleFeedView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var title: String
+    @State private var urlString: String
+    let onSave: (FeedSource?) -> Void
+
+    init(feed: FeedSource, onSave: @escaping (FeedSource?) -> Void) {
+        _title = State(initialValue: feed.title)
+        _urlString = State(initialValue: feed.url)
+        self.onSave = onSave
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Details") {
+                    TextField("Name", text: $title)
+                        .textInputAutocapitalization(.words)
+                    TextField("Feed URL", text: $urlString)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.URL)
+                        .autocorrectionDisabled(true)
+                }
+            }
+            .navigationTitle("Feed bearbeiten")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard let url = URL(string: trimmedURL), !trimmedURL.isEmpty else {
+                            onSave(nil)
+                            dismiss()
+                            return
+                        }
+                        let name = title.isEmpty ? trimmedURL : title
+                        let updated = FeedSource(title: name, url: url.absoluteString)
+                        onSave(updated)
+                        dismiss()
+                    } label: { Image(systemName: "checkmark") }
+                    .disabled(urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+// REPLACED PersonalizationViewPlaceholder with richer settings form
+struct PersonalizationViewPlaceholder: View {
+    @EnvironmentObject private var theme: ThemeSettings
+    @AppStorage("ui.font.size") private var fontSize: Double = 16
+    @AppStorage("ui.cards.previewLines") private var previewLines: Int = 3
+    @AppStorage("ui.cards.style.fullColor") private var fullColorCards: Bool = false
+
+    @State private var selectedColor: Color = .blue {
+        didSet { theme.setUIAccentColor(selectedColor )}
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Kacheln") {
+                    Stepper(value: $previewLines, in: 0...6) {
+                        Label("Anzahl Vorschauzeilen: \(previewLines)", systemImage: "text.justify.left")
+                    }
+                    Toggle(isOn: $fullColorCards) {
+                        Label("Vollflächige Kacheln", systemImage: fullColorCards ? "rectangle.inset.filled" :"rectangle")
+                    }
+                }
+
+                Section("Akzentferbe") {
+                    ColorGridPicker(selected: $selectedColor)
+                }
+            }
+            .navigationTitle("Personalisierung")
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationLinkIndicatorVisibility(.visible)
+            .onAppear {
+                selectedColor = theme.uiAccentColor
+            }
+        }
+    }
+}
+
+// New helper view for color selection
+struct ColorGridPicker: View {
+    @Binding var selected: Color
+    private let colors: [Color] = [
+        Color(red: 0.98, green: 0.80, blue: 0.80), // pastel red
+        Color(red: 0.99, green: 0.88, blue: 0.73), // pastel orange
+        Color(red: 0.99, green: 0.97, blue: 0.76), // pastel yellow
+        Color(red: 0.80, green: 0.93, blue: 0.82), // pastel green
+        Color(red: 0.78, green: 0.88, blue: 0.97), // pastel blue
+        Color(red: 0.86, green: 0.80, blue: 0.96), // pastel purple
+        Color(red: 0.96, green: 0.80, blue: 0.88)  // pastel pink
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 7), spacing: 12) {
+                ForEach(colors.indices, id: \.self) { idx in
+                    let color = colors[idx]
+                    ZStack {
+                        Circle().fill(color)
+                        if color.description == selected.description {
+                            Image(systemName: "checkmark")
+                                .font(.caption2)
+                                .foregroundStyle(.black)
+                        }
+                    }
+                    .frame(width: 28, height: 28)
+                    .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { selected = color } }
+                    .shadow(color: .black.opacity(0.08), radius: 3, x: 0, y: 1)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+}
+
+// REPLACED InfoViewPlaceholder with more complete About view
+struct InfoViewPlaceholder: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Danksagung") {
+                    Text("Vielen Dank an alle Open-Source-Projekte und die Community, die diese App möglich machen.")
+                }
+                Section("Autor") {
+                    LabeledContent("Name") { Text("Dein Name") }
+                    LabeledContent("Kontakt") { Text("@deinhandle") }
+                }
+                Section("App") {
+                    LabeledContent("Version") { Text(appVersion) }
+                    LabeledContent("Build") { Text(appBuild) }
+                }
+                Section("Rechtliches") {
+                    LabeledContent("Lizenz") { Text("MIT License") }
+                    LabeledContent("Copyright") { Text("© \(Calendar.current.component(.year, from: Date())) Dein Name") }
+                }
+            }
+            .navigationTitle("Info")
+        }
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    }
+    private var appBuild: String {
+        Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
     }
 }
 

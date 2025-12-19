@@ -116,7 +116,34 @@ struct BookmarksView: View {
              }
              .navigationDestination(for: FeedEntry.self) { entry in
                  let color = theme.color(for: feedForEntry(entry)?.url)
-                 FeedDetailView(entry: entry, feedColor: color)
+                 FeedDetailView(
+                     entry: entry,
+                     feedColor: color,
+                     entriesProvider: {
+                         // Map the currently visible, sorted bookmarks to lightweight FeedEntry list for navigation
+                         sortedBookmarkedEntries.map { m in
+                             FeedEntry(
+                                 title: m.title,
+                                 link: m.link,
+                                 content: m.content,
+                                 author: m.author,
+                                 sourceTitle: m.sourceTitle,
+                                 feedURL: m.sourceURL,
+                                 pubDateString: m.pubDateString,
+                                 isRead: store.isRead(articleID: m.link)
+                             )
+                         }
+                     },
+                     onNavigateToEntry: { newEntry, _ in
+                         withAnimation(.smooth(duration: 0.22)) {
+                             if !path.isEmpty {
+                                 path[path.count - 1] = newEntry
+                             } else {
+                                 path.append(newEntry)
+                             }
+                         }
+                     }
+                 )
              }
          }
         .onAppear(perform: loadFeeds)
@@ -349,7 +376,7 @@ private struct BookmarkEntryRow: View {
             }
         }()
         let feedColor = resolvedColor
-        var detailEntry: FeedEntry = {
+        let detailEntry: FeedEntry = {
             var updated = feedEntry
             updated.sourceTitle = feedName
             updated.feedURL = colorSourceURL
@@ -459,3 +486,4 @@ private struct BookmarkEntryRow: View {
         }
     }
 }
+

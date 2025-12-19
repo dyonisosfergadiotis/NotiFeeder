@@ -26,19 +26,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
 
-        self.scheduleNextFetch()
-        _ = ArticleStore.shared
         return true
-    }
-
-    func scheduleNextFetch() {
-        let request = BGAppRefreshTaskRequest(identifier: "de.dyonisos.NotiFeeder.refresh")
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 30 * 60) // alle 30 min
-        try? BGTaskScheduler.shared.submit(request)
-    }
-
-    func applicationDidEnterBackground(_ application: UIApplication) {
-        self.scheduleNextFetch()
     }
 
     private func loadFeedsFromStorage() -> [FeedSource] {

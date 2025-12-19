@@ -40,6 +40,8 @@ struct FeedDetailView: View {
     @EnvironmentObject private var store: ArticleStore
     @Environment(\.modelContext) private var modelContext
     
+    // --- SCROLL STATE ---
+    @State private var isScrollingDown = false
 
     @State private var webView: WKWebView = {
         let config = WKWebViewConfiguration()
@@ -90,8 +92,6 @@ struct FeedDetailView: View {
 
     private func currentIndex(in list: [FeedEntry]) -> Int? {
         if let idx = list.firstIndex(where: { $0.link == entry.link }) { return idx }
-        if let idx = list.firstIndex(where: { $0.id == entry.id }) { return idx }
-        if let idx = list.firstIndex(where: { $0.title == entry.title }) { return idx }
         return nil
     }
 
@@ -151,104 +151,123 @@ struct FeedDetailView: View {
         )
     }
 
-    private var contentWebView: some View {
-        WebView(webView: webView, htmlContent: formattedHTML(accentHex: theme.uiAccentHexString))
-            .frame(maxHeight: .infinity)
-            .edgesIgnoringSafeArea(.bottom)
-    }
-
-    @ToolbarContentBuilder private var toolBarItems: some ToolbarContent {
-        ToolbarItem(placement: .topBarTrailing) {
-            Button(action: { toggleBookmark() }) {
-                ZStack {
-                    Image(systemName: "bookmark").font(.system(size: 18, weight: .regular))
-                    Image(systemName: "bookmark.fill").font(.system(size: 18, weight: .regular))
-                        .mask(Rectangle().scaleEffect(y: isBookmarked ? 1 : 0, anchor: .top))
-                }
-            }
-            .tint(feedColor ?? theme.uiAccentColor)
-        }
-
+    @ToolbarContentBuilder
+    private var expandedToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .bottomBar) {
             Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) {
                 Image(systemName: "safari")
             }
-            .tint(feedColor ?? theme.uiAccentColor)
-
             Button(action: { gatherShareContent() }) {
                 Image(systemName: "square.and.arrow.up")
             }
-            .tint(feedColor ?? theme.uiAccentColor)
-
             Button(action: {
                 isReadLocal.toggle()
                 store.setRead(isReadLocal, articleID: entry.link)
             }) {
                 Image(systemName: isReadLocal ? "checkmark.circle.fill" : "checkmark.circle")
             }
-            .tint(feedColor ?? theme.uiAccentColor)
-
             Button(action: { activeSheet = .readerSettings }) {
                 Image(systemName: "textformat.size")
             }
-            .tint(feedColor ?? theme.uiAccentColor)
         }
-
         ToolbarSpacer(.fixed, placement: .bottomBar)
-
         ToolbarItemGroup(placement: .bottomBar) {
             Button(action: { goToPrevious() }) {
                 Image(systemName: "chevron.left")
             }
-            .tint(feedColor ?? theme.uiAccentColor)
             .disabled(isAtFirstEntry)
 
             Button(action: { goToNext() }) {
                 Image(systemName: "chevron.right")
             }
-            .tint(feedColor ?? theme.uiAccentColor)
             .disabled(isAtLastEntry)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var collapsedToolbar: some ToolbarContent {
+        ToolbarItemGroup(placement: .bottomBar) {
+            Button{
+            }label:{
+                Image(systemName: "ellipsis")
+                    .tint(feedColor)
+            }
+            Button(action: {
+                isReadLocal.toggle()
+                store.setRead(isReadLocal, articleID: entry.link)
+            }) {
+                Image(systemName: isReadLocal ? "checkmark.circle.fill" : "checkmark.circle")
+            }
+            
+            
+            
+        Spacer()
+            
+            
+            Button{
+                
+            }label:{
+                Image(systemName: "chevron.compact.left.chevron.compact.right")
+            }.tint(feedColor)
         }
     }
 
     private var readerSettings: [AnyHashable] { [readerFontScale, readerFontFamily, readerLineSpacing, readerTextAlignmentRaw] }
     
-    
     var body: some View {
-        GeometryReader { _ in
-            VStack(spacing: 0) {
-                AnyView(headerView)
-                AnyView(contentWebView)
-            }
-            .toolbar { toolBarItems }
-            .toolbar(.visible, for: .navigationBar)
-            .navigationBarBackButtonHidden(false)
-            .tint(feedColor ?? theme.uiAccentColor)
-            .navigationBarTitleDisplayMode(.inline)
-            .navigationTitle(entry.title)
-            .onAppear {
-                store.markRecentlyRead(articleID: entry.link)
-                isReadLocal = store.isRead(articleID: entry.link)
-                isBookmarked = isCurrentlyBookmarked()
-            }
-            .onChange(of: readerSettings) { _ in
-                webView.loadHTMLString(formattedHTML(accentHex: theme.uiAccentHexString), baseURL: nil)
-            }
-            .sheet(item: $activeSheet) { sheet in
-                switch sheet {
-                case .share(let payload, _):
-                    ShareSheet(items: [payload])
-                        .presentationDetents([.fraction(0.5)])
-                case .readerSettings:
-                    ReaderSettingsPanel(textAlignment: $readerTextAlignmentRaw, fontScale: $readerFontScale, fontFamily: $readerFontFamily, lineSpacing: $readerLineSpacing, feedColor: .constant(feedColor ?? theme.uiAccentColor)
-                    )
-                        .presentationDetents([.fraction(0.5)])
+        VStack(spacing: 0) {
+            headerView
+            WebView(webView: webView,
+                    htmlContent: formattedHTML(accentHex: theme.uiAccentHexString),
+                    isScrollingDown: $isScrollingDown)
+                .frame(maxHeight: .infinity)
+                .edgesIgnoringSafeArea(.bottom)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: { toggleBookmark() }) {
+                    ZStack {
+                        Image(systemName: "bookmark").font(.system(size: 18, weight: .regular))
+                        Image(systemName: "bookmark.fill").font(.system(size: 18, weight: .regular))
+                            .mask(Rectangle().scaleEffect(y: isBookmarked ? 1 : 0, anchor: .top))
+                    }
                 }
+                .tint(feedColor ?? theme.uiAccentColor)
+            }
+
+            if isScrollingDown {
+                collapsedToolbar
+            } else {
+                expandedToolbar
+            }
+        }
+        .toolbar(.visible, for: .navigationBar)
+        .navigationBarBackButtonHidden(false)
+        .tint(feedColor ?? theme.uiAccentColor)
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationTitle(entry.title)
+        .onAppear {
+            store.markRecentlyRead(articleID: entry.link)
+            isReadLocal = store.isRead(articleID: entry.link)
+            isBookmarked = isCurrentlyBookmarked()
+        }
+        .animation(.snappy(duration: 0.3), value: isScrollingDown)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .share(let payload, _):
+                ShareSheet(items: [payload])
+                    .presentationDetents([.fraction(0.5)])
+            case .readerSettings:
+                ReaderSettingsPanel(textAlignment: $readerTextAlignmentRaw,
+                                    fontScale: $readerFontScale,
+                                    fontFamily: $readerFontFamily,
+                                    lineSpacing: $readerLineSpacing,
+                                    feedColor: .constant(feedColor ?? theme.uiAccentColor))
+                    .presentationDetents([.fraction(0.5)])
             }
         }
     }
 
-    // ... (formattedHTML, fixYouTubeIframes, etc. bleiben identisch wie in deinem Code)
     private func fixYouTubeIframes(in html: String) -> String {
         let pattern = "<iframe([^>]*)src=\"([^\"]*youtube[^\"]*)\"([^>]*)>"
         return html.replacingOccurrences(of: pattern, with: "<iframe$1src=\"$2\"$3 allow=\"fullscreen\" playsinline></iframe>", options: .regularExpression)
@@ -261,6 +280,7 @@ struct FeedDetailView: View {
         let textAlignCSS = readerTextAlignmentRaw == "justified" ? "justify" : readerTextAlignmentRaw
         let rgb = (feedColor ?? theme.uiAccentColor).rgbComponents ?? (0,0,0)
         let background: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.1)"
+        let accentHex = (feedColor ?? theme.uiAccentColor).toHex() ?? "007AFF"
 
         return """
         <html>
@@ -280,6 +300,7 @@ struct FeedDetailView: View {
     }
 
     private var headerTint: Color { feedColor ?? theme.uiAccentColor }
+    
     private func gatherShareContent() {
         webView.evaluateJavaScript("window.getSelection().toString();") { result, _ in
             let snippet = (result as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -288,43 +309,89 @@ struct FeedDetailView: View {
             activeSheet = .share(payload: composed)
         }
     }
+    
     private func isCurrentlyBookmarked() -> Bool {
         let descriptor = FetchDescriptor<FeedEntryModel>(predicate: #Predicate { $0.link == entry.link && $0.isBookmarked })
         let results = try? modelContext.fetch(descriptor)
         return (results?.isEmpty == false)
     }
+    
     private func toggleBookmark() {
         BookmarkService.toggleBookmark(for: entry, context: modelContext)
         isBookmarked = BookmarkService.isBookmarked(link: entry.link, context: modelContext)
     }
 }
 
+// --- WEBVIEW BRIDGE MIT FIX GEGEN SPRINGEN ---
+
 struct WebView: UIViewRepresentable {
     let webView: WKWebView
     let htmlContent: String
+    @Binding var isScrollingDown: Bool
 
     func makeUIView(context: Context) -> WKWebView {
+        webView.scrollView.delegate = context.coordinator
+        webView.loadHTMLString(htmlContent, baseURL: nil)
         return webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        uiView.loadHTMLString(htmlContent, baseURL: nil)
+        // NUR neu laden, wenn sich der Content (Reader Settings) wirklich geändert hat.
+        // Verhindert das Springen zum Anfang beim Toolbar-Toggle.
+        if context.coordinator.lastLoadedHTML != htmlContent {
+            context.coordinator.lastLoadedHTML = htmlContent
+            uiView.loadHTMLString(htmlContent, baseURL: nil)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isScrollingDown: $isScrollingDown)
+    }
+
+    class Coordinator: NSObject, UIScrollViewDelegate {
+        @Binding var isScrollingDown: Bool
+        private var lastOffset: CGFloat = 0
+        var lastLoadedHTML: String = ""
+
+        init(isScrollingDown: Binding<Bool>) {
+            _isScrollingDown = isScrollingDown
+        }
+
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            let currentOffset = scrollView.contentOffset.y
+            let threshold: CGFloat = 10
+            
+            // Reagiere nur auf echtes User-Scrollen
+            guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
+
+            if currentOffset <= 5 {
+                updateScrollState(false)
+                return
+            }
+
+            if currentOffset > lastOffset + threshold && !isScrollingDown {
+                updateScrollState(true)
+            } else if currentOffset < lastOffset - threshold && isScrollingDown {
+                updateScrollState(false)
+            }
+            
+            lastOffset = currentOffset
+        }
+        
+        private func updateScrollState(_ newValue: Bool) {
+            DispatchQueue.main.async {
+                if self.isScrollingDown != newValue {
+                    self.isScrollingDown = newValue
+                }
+            }
+        }
     }
 }
 
-struct ScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
-}
-// Minimal ShareSheet wrapper
 struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
-
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
-
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
-
 }
-

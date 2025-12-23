@@ -115,7 +115,7 @@ struct BookmarksView: View {
                  }
              }
              .navigationDestination(for: FeedEntry.self) { entry in
-                 let color = theme.color(for: feedForEntry(entry)?.url)
+                 let color = detailFeedColor(for: entry)
                  FeedDetailView(
                      entry: entry,
                      feedColor: color,
@@ -178,6 +178,19 @@ private extension BookmarksView {
             }
         }
         return feeds.first { $0.title == entry.sourceTitle }
+    }
+    
+    func detailFeedColor(for entry: FeedEntry) -> Color {
+        let matchedFeed = feedForEntry(entry)
+        let feedName = matchedFeed?.title ?? entry.sourceTitle ?? "Unbekannte Quelle"
+        let colorSourceURL = matchedFeed?.url ?? entry.feedURL
+        if let url = colorSourceURL {
+            let c = theme.color(for: url)
+            if c != Color.clear { return c }
+            return deterministicColor(from: url)
+        } else {
+            return deterministicColor(from: feedName)
+        }
     }
 
     func loadFeeds() {

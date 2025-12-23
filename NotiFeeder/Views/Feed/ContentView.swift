@@ -279,7 +279,6 @@ struct FeedListView: View {
     
     @ToolbarContentBuilder
     private var feedToolbar: some ToolbarContent {
-        if #available(iOS 26, *) {
                 DefaultToolbarItem(
                     kind: .search,
                     placement: .bottomBar
@@ -300,9 +299,6 @@ struct FeedListView: View {
                     }
                     .tint(theme.uiAccentColor)
                 }
-            
-            }
-        
         
         ToolbarItemGroup(placement: .topBarLeading) {
             Menu {

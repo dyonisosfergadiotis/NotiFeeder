@@ -1,6 +1,6 @@
 import WebKit
 import SwiftUI
-import FoundationModels
+import QuartzCore
 import Foundation
 import SwiftData
 
@@ -40,14 +40,16 @@ struct FeedDetailView: View {
     @EnvironmentObject private var store: ArticleStore
     @Environment(\.modelContext) private var modelContext
     
-    // --- SCROLL STATE ---
+    // --- SCROLL & TOOLBAR STATE (scroll has priority; taps expand sides) ---
     @State private var isScrollingDown = false
+    @State private var isLeftBarExpanded = true
+    @State private var isRightBarExpanded = true
+    @State private var bothExpanded = true
 
     @State private var webView: WKWebView = {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
-        
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.scrollView.showsVerticalScrollIndicator = false
         wv.scrollView.showsHorizontalScrollIndicator = false
@@ -66,13 +68,16 @@ struct FeedDetailView: View {
     private enum ActiveSheet: Identifiable {
         case share(payload: String, token: UUID = UUID())
         case readerSettings
+        case feedSheet
         var id: UUID {
             switch self {
             case .share(_, let token): return token
             case .readerSettings: return ActiveSheet.readerSettingsID
+            case .feedSheet: return ActiveSheet.feedSheetID
             }
         }
         private static let readerSettingsID = UUID()
+        private static let feedSheetID = UUID()
     }
 
     init(entry: FeedEntry, feedColor: Color? = nil) {
@@ -91,8 +96,7 @@ struct FeedDetailView: View {
     }
 
     private func currentIndex(in list: [FeedEntry]) -> Int? {
-        if let idx = list.firstIndex(where: { $0.link == entry.link }) { return idx }
-        return nil
+        list.firstIndex(where: { $0.link == entry.link })
     }
 
     private var isAtFirstEntry: Bool {
@@ -145,33 +149,53 @@ struct FeedDetailView: View {
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
         .background(
             LinearGradient(
-                colors: [headerTint.opacity(0.3), (feedColor ?? .primary).opacity(0.1)],
+                colors: [headerTint.opacity(0.3), resolvedFeedColor.opacity(0.1)],
                 startPoint: .top,
                 endPoint: .bottom)
         )
     }
+    
+    public func expandBars() -> Void {
+        bothExpanded = true
+        isLeftBarExpanded = true
+        isRightBarExpanded = true
+    }
 
     @ToolbarContentBuilder
-    private var expandedToolbar: some ToolbarContent {
+    private var dynamicBottomToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .bottomBar) {
-            Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) {
-                Image(systemName: "safari")
+            // --- LINKER TEIL ---
+            if isLeftBarExpanded {
+                Button(action: { activeSheet = .readerSettings }) {
+                    Image(systemName: "textformat.size")
+                }
+                Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) {
+                    Image(systemName: "safari")
+                }
+                Button(action: { gatherShareContent() }) {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                Button(action: {
+                    isReadLocal.toggle()
+                    store.setRead(isReadLocal, articleID: entry.link)
+                }) {
+                    Image(systemName: isReadLocal ? "checkmark.circle.fill" : "checkmark.circle")
+                }
+            } else {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        isLeftBarExpanded = true
+                        bothExpanded = true
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+                .tint(resolvedFeedColor)
             }
-            Button(action: { gatherShareContent() }) {
-                Image(systemName: "square.and.arrow.up")
-            }
-            Button(action: {
-                isReadLocal.toggle()
-                store.setRead(isReadLocal, articleID: entry.link)
-            }) {
-                Image(systemName: isReadLocal ? "checkmark.circle.fill" : "checkmark.circle")
-            }
-            Button(action: { activeSheet = .readerSettings }) {
-                Image(systemName: "textformat.size")
-            }
-        }
-        ToolbarSpacer(.fixed, placement: .bottomBar)
-        ToolbarItemGroup(placement: .bottomBar) {
+            
+            Spacer()
+            
+            // --- RECHTER TEIL ---
             Button(action: { goToPrevious() }) {
                 Image(systemName: "chevron.left")
             }
@@ -183,42 +207,19 @@ struct FeedDetailView: View {
             .disabled(isAtLastEntry)
         }
     }
-
-    @ToolbarContentBuilder
-    private var collapsedToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .bottomBar) {
-            Button{
-            }label:{
-                Image(systemName: "ellipsis")
-                    .tint(feedColor)
-            }
-            Button(action: {
-                isReadLocal.toggle()
-                store.setRead(isReadLocal, articleID: entry.link)
-            }) {
-                Image(systemName: isReadLocal ? "checkmark.circle.fill" : "checkmark.circle")
-            }
-            
-            
-            
-        Spacer()
-            
-            
-            Button{
-                
-            }label:{
-                Image(systemName: "chevron.compact.left.chevron.compact.right")
-            }.tint(feedColor)
+    
+    private func webAccentHexString() -> String {
+        guard let components = resolvedFeedColor.rgbComponents else {
+            return "#007AFF"
         }
+        return String(format: "#%02X%02X%02X", components.red, components.green, components.blue)
     }
 
-    private var readerSettings: [AnyHashable] { [readerFontScale, readerFontFamily, readerLineSpacing, readerTextAlignmentRaw] }
-    
     var body: some View {
         VStack(spacing: 0) {
             headerView
             WebView(webView: webView,
-                    htmlContent: formattedHTML(accentHex: theme.uiAccentHexString),
+                    htmlContent: formattedHTML(accentHex: webAccentHexString()),
                     isScrollingDown: $isScrollingDown)
                 .frame(maxHeight: .infinity)
                 .edgesIgnoringSafeArea(.bottom)
@@ -232,26 +233,33 @@ struct FeedDetailView: View {
                             .mask(Rectangle().scaleEffect(y: isBookmarked ? 1 : 0, anchor: .top))
                     }
                 }
-                .tint(feedColor ?? theme.uiAccentColor)
-            }
-
-            if isScrollingDown {
-                collapsedToolbar
-            } else {
-                expandedToolbar
+                .tint(resolvedFeedColor)
             }
         }
-        .toolbar(.visible, for: .navigationBar)
-        .navigationBarBackButtonHidden(false)
-        .tint(feedColor ?? theme.uiAccentColor)
+        .toolbar {
+            dynamicBottomToolbar
+        }
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle(entry.title)
+        .tint(resolvedFeedColor)
         .onAppear {
             store.markRecentlyRead(articleID: entry.link)
             isReadLocal = store.isRead(articleID: entry.link)
             isBookmarked = isCurrentlyBookmarked()
+            bothExpanded = true
         }
-        .animation(.snappy(duration: 0.3), value: isScrollingDown)
+        .onChange(of: isScrollingDown) { _, scrollingDown in
+            withAnimation(.snappy(duration: 0.25)) {
+                isLeftBarExpanded = !scrollingDown
+                bothExpanded = isLeftBarExpanded
+                isRightBarExpanded = true
+            }
+        }
+        .onChange(of: bothExpanded) { _, newValue in
+            withAnimation(.snappy(duration: 0.2)) {
+                isLeftBarExpanded = newValue
+            }
+        }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .share(let payload, _):
@@ -262,25 +270,60 @@ struct FeedDetailView: View {
                                     fontScale: $readerFontScale,
                                     fontFamily: $readerFontFamily,
                                     lineSpacing: $readerLineSpacing,
-                                    feedColor: .constant(feedColor ?? theme.uiAccentColor))
+                                    feedColor: .constant(resolvedFeedColor))
                     .presentationDetents([.fraction(0.5)])
+            case .feedSheet:
+                VStack(spacing: 16) {
+                    HStack(spacing: 12) {
+                        Circle()
+                            .fill(resolvedFeedColor)
+                            .frame(width: 20, height: 20)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(entry.sourceTitle ?? "Unbekannte Quelle")
+                                .font(.headline)
+                            Text(entry.author ?? "Unbekannt")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        if let url = URL(string: entry.link) { UIApplication.shared.open(url) }
+                    } label: {
+                        Label("Quelle im Browser öffnen", systemImage: "safari")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(resolvedFeedColor)
+                    Button {
+                        gatherShareContent()
+                    } label: {
+                        Label("Artikel teilen", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding()
+                .presentationDetents([.fraction(0.35), .medium])
             }
         }
     }
 
     private func fixYouTubeIframes(in html: String) -> String {
-        let pattern = "<iframe([^>]*)src=\"([^\"]*youtube[^\"]*)\"([^>]*)>"
-        return html.replacingOccurrences(of: pattern, with: "<iframe$1src=\"$2\"$3 allow=\"fullscreen\" playsinline></iframe>", options: .regularExpression)
+        let pattern = "<iframe([^>]*)src=\"([^\\\"]*youtube[^\\\"]*)\"([^>]*)>"
+        return html.replacingOccurrences(of: pattern,
+                                         with: "<iframe$1src=\\\"$2\\\"$3 allow=\\\"fullscreen\\\" playsinline></iframe>",
+                                         options: .regularExpression)
     }
-
+    
     private func formattedHTML(accentHex: String) -> String {
         let fontSize = 18 * readerFontScale
         let lineHeight = readerLineSpacing
         let fontFamilyCSS = (ReaderFontFamily(rawValue: readerFontFamily) ?? .rounded).cssValue
         let textAlignCSS = readerTextAlignmentRaw == "justified" ? "justify" : readerTextAlignmentRaw
-        let rgb = (feedColor ?? theme.uiAccentColor).rgbComponents ?? (0,0,0)
+        let rgb = resolvedFeedColor.rgbComponents ?? (0,0,0)
         let background: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.1)"
-        let accentHex = (feedColor ?? theme.uiAccentColor).toHex() ?? "007AFF"
 
         return """
         <html>
@@ -299,7 +342,11 @@ struct FeedDetailView: View {
         """
     }
 
-    private var headerTint: Color { feedColor ?? theme.uiAccentColor }
+    private var resolvedFeedColor: Color {
+        feedColor ?? theme.uiAccentColor
+    }
+
+    private var headerTint: Color { resolvedFeedColor }
     
     private func gatherShareContent() {
         webView.evaluateJavaScript("window.getSelection().toString();") { result, _ in
@@ -322,8 +369,6 @@ struct FeedDetailView: View {
     }
 }
 
-// --- WEBVIEW BRIDGE MIT FIX GEGEN SPRINGEN ---
-
 struct WebView: UIViewRepresentable {
     let webView: WKWebView
     let htmlContent: String
@@ -336,8 +381,6 @@ struct WebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // NUR neu laden, wenn sich der Content (Reader Settings) wirklich geändert hat.
-        // Verhindert das Springen zum Anfang beim Toolbar-Toggle.
         if context.coordinator.lastLoadedHTML != htmlContent {
             context.coordinator.lastLoadedHTML = htmlContent
             uiView.loadHTMLString(htmlContent, baseURL: nil)
@@ -351,6 +394,10 @@ struct WebView: UIViewRepresentable {
     class Coordinator: NSObject, UIScrollViewDelegate {
         @Binding var isScrollingDown: Bool
         private var lastOffset: CGFloat = 0
+        private var lastDirectionDown: Bool = false
+        private var lastUpdateTime: TimeInterval = 0
+        private let minDelta: CGFloat = 12
+        private let minInterval: TimeInterval = 0.08
         var lastLoadedHTML: String = ""
 
         init(isScrollingDown: Binding<Bool>) {
@@ -359,25 +406,40 @@ struct WebView: UIViewRepresentable {
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             let currentOffset = scrollView.contentOffset.y
-            let threshold: CGFloat = 10
-            
-            // Reagiere nur auf echtes User-Scrollen
+            let now = CACurrentMediaTime()
+
+            // Only react to real user scrolling
             guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
 
+            // Near top: always expand
             if currentOffset <= 5 {
                 updateScrollState(false)
+                lastOffset = currentOffset
+                lastDirectionDown = false
+                lastUpdateTime = now
                 return
             }
 
-            if currentOffset > lastOffset + threshold && !isScrollingDown {
-                updateScrollState(true)
-            } else if currentOffset < lastOffset - threshold && isScrollingDown {
-                updateScrollState(false)
+            let delta = currentOffset - lastOffset
+            let isDown = delta > 0
+
+            // Hysteresis: ignore tiny moves and too frequent updates
+            guard abs(delta) >= minDelta || (isDown != lastDirectionDown) else { return }
+            guard now - lastUpdateTime >= minInterval else { return }
+
+            if isDown {
+                // collapse on downward movement
+                if !isScrollingDown { updateScrollState(true) }
+            } else {
+                // expand on upward movement
+                if isScrollingDown { updateScrollState(false) }
             }
-            
+
             lastOffset = currentOffset
+            lastDirectionDown = isDown
+            lastUpdateTime = now
         }
-        
+       
         private func updateScrollState(_ newValue: Bool) {
             DispatchQueue.main.async {
                 if self.isScrollingDown != newValue {
@@ -395,3 +457,4 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
 }
+

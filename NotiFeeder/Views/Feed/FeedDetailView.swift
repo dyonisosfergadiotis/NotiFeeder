@@ -40,7 +40,7 @@ struct FeedDetailView: View {
     @EnvironmentObject private var store: ArticleStore
     @Environment(\.modelContext) private var modelContext
     
-    // --- SCROLL & TOOLBAR STATE (scroll has priority; taps expand sides) ---
+    // --- UNIFIED COLLAPSE BEHAVIOR FOR TOOLBARS (scroll drives collapse; taps expand sides) ---
     @State private var isScrollingDown = false
     @State private var isLeftBarExpanded = true
     @State private var isRightBarExpanded = true
@@ -56,7 +56,6 @@ struct FeedDetailView: View {
         return wv
     }()
     
-    @State private var shareText: String = ""
     @State private var activeSheet: ActiveSheet?
     @State private var isReadLocal: Bool = false
     @State private var isBookmarked: Bool = false
@@ -68,16 +67,13 @@ struct FeedDetailView: View {
     private enum ActiveSheet: Identifiable {
         case share(payload: String, token: UUID = UUID())
         case readerSettings
-        case feedSheet
         var id: UUID {
             switch self {
             case .share(_, let token): return token
             case .readerSettings: return ActiveSheet.readerSettingsID
-            case .feedSheet: return ActiveSheet.feedSheetID
             }
         }
         private static let readerSettingsID = UUID()
-        private static let feedSheetID = UUID()
     }
 
     init(entry: FeedEntry, feedColor: Color? = nil) {
@@ -155,32 +151,22 @@ struct FeedDetailView: View {
         )
     }
     
-    public func expandBars() -> Void {
-        bothExpanded = true
-        isLeftBarExpanded = true
-        isRightBarExpanded = true
-    }
-
     @ToolbarContentBuilder
     private var dynamicBottomToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .bottomBar) {
-            // --- LINKER TEIL ---
-            if isLeftBarExpanded {
-                Button(action: { activeSheet = .readerSettings }) {
-                    Image(systemName: "textformat.size")
-                }
-                Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) {
-                    Image(systemName: "safari")
-                }
-                Button(action: { gatherShareContent() }) {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                Button(action: {
-                    isReadLocal.toggle()
-                    store.setRead(isReadLocal, articleID: entry.link)
-                }) {
-                    Image(systemName: isReadLocal ? "checkmark.circle.fill" : "checkmark.circle")
-                }
+            // Left cluster
+            if bothExpanded || isLeftBarExpanded {
+                HStack(spacing: 18) {
+                    Button(action: { activeSheet = .readerSettings }) { Image(systemName: "textformat.size") }
+                    Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) { Image(systemName: "safari") }
+                    VStack{Button(action: { gatherShareContent() }) { Image(systemName: "square.and.arrow.up") }}.padding(.bottom,4)
+                    Button(action: {
+                        isReadLocal.toggle()
+                        store.setRead(isReadLocal, articleID: entry.link)
+                    }) {
+                        Image(systemName: isReadLocal ? "eye.slash" : "eye")
+                    }
+                }.padding(.horizontal, 8)
             } else {
                 Button {
                     withAnimation(.snappy(duration: 0.2)) {
@@ -190,21 +176,29 @@ struct FeedDetailView: View {
                 } label: {
                     Image(systemName: "ellipsis")
                 }
-                .tint(resolvedFeedColor)
             }
-            
-            Spacer()
-            
-            // --- RECHTER TEIL ---
-            Button(action: { goToPrevious() }) {
-                Image(systemName: "chevron.left")
-            }
-            .disabled(isAtFirstEntry)
 
-            Button(action: { goToNext() }) {
-                Image(systemName: "chevron.right")
+            Spacer(minLength: 8)
+
+            // Right cluster
+            if bothExpanded || isRightBarExpanded {
+                HStack(spacing: 18) {
+                    Button(action: { goToPrevious() }) { Image(systemName: "chevron.left") }
+                        .disabled(isAtFirstEntry)
+                    Button(action: { goToNext() }) { Image(systemName: "chevron.right") }
+                        .disabled(isAtLastEntry)
+                }.padding(.horizontal, 8)
+            } else {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        isLeftBarExpanded = true
+                        isRightBarExpanded = true
+                        bothExpanded = true
+                    }
+                } label: {
+                    Image(systemName: "chevron.left.chevron.right")
+                }
             }
-            .disabled(isAtLastEntry)
         }
     }
     
@@ -233,7 +227,7 @@ struct FeedDetailView: View {
                             .mask(Rectangle().scaleEffect(y: isBookmarked ? 1 : 0, anchor: .top))
                     }
                 }
-                .tint(resolvedFeedColor)
+                .tint(feedColor)
             }
         }
         .toolbar {
@@ -241,7 +235,7 @@ struct FeedDetailView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle(entry.title)
-        .tint(resolvedFeedColor)
+        .tint(feedColor)
         .onAppear {
             store.markRecentlyRead(articleID: entry.link)
             isReadLocal = store.isRead(articleID: entry.link)
@@ -250,14 +244,15 @@ struct FeedDetailView: View {
         }
         .onChange(of: isScrollingDown) { _, scrollingDown in
             withAnimation(.snappy(duration: 0.25)) {
-                isLeftBarExpanded = !scrollingDown
-                bothExpanded = isLeftBarExpanded
-                isRightBarExpanded = true
-            }
-        }
-        .onChange(of: bothExpanded) { _, newValue in
-            withAnimation(.snappy(duration: 0.2)) {
-                isLeftBarExpanded = newValue
+                if scrollingDown {
+                    isLeftBarExpanded = false
+                    isRightBarExpanded = false
+                    bothExpanded = false
+                } else {
+                    isLeftBarExpanded = true
+                    isRightBarExpanded = true
+                    bothExpanded = true
+                }
             }
         }
         .sheet(item: $activeSheet) { sheet in
@@ -272,40 +267,6 @@ struct FeedDetailView: View {
                                     lineSpacing: $readerLineSpacing,
                                     feedColor: .constant(resolvedFeedColor))
                     .presentationDetents([.fraction(0.5)])
-            case .feedSheet:
-                VStack(spacing: 16) {
-                    HStack(spacing: 12) {
-                        Circle()
-                            .fill(resolvedFeedColor)
-                            .frame(width: 20, height: 20)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(entry.sourceTitle ?? "Unbekannte Quelle")
-                                .font(.headline)
-                            Text(entry.author ?? "Unbekannt")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    Button {
-                        if let url = URL(string: entry.link) { UIApplication.shared.open(url) }
-                    } label: {
-                        Label("Quelle im Browser öffnen", systemImage: "safari")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(resolvedFeedColor)
-                    Button {
-                        gatherShareContent()
-                    } label: {
-                        Label("Artikel teilen", systemImage: "square.and.arrow.up")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding()
-                .presentationDetents([.fraction(0.35), .medium])
             }
         }
     }
@@ -348,11 +309,12 @@ struct FeedDetailView: View {
 
     private var headerTint: Color { resolvedFeedColor }
     
+    private var accentColor: Color { theme.uiAccentColor }
+    
     private func gatherShareContent() {
         webView.evaluateJavaScript("window.getSelection().toString();") { result, _ in
             let snippet = (result as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let composed = [entry.title, snippet, entry.link].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
-            shareText = composed
             activeSheet = .share(payload: composed)
         }
     }

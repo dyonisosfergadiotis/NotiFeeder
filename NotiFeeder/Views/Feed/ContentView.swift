@@ -172,7 +172,7 @@ struct FeedListView: View {
     
     private var feedListView: some View {
         List {
-            ForEach(filteredEntries) { entry in
+            ForEach(filteredEntries, id: \.id) { entry in
                 entryRow(for: entry)
             }
         }
@@ -257,8 +257,11 @@ struct FeedListView: View {
             }
         }
         .onChange(of: feeds) { oldValue, newValue in
-            triggerInitialLoadIfPossible()
+            // When feeds are added or removed, ensure UI updates immediately
             pruneEntriesForRemovedFeeds()
+            Task { @MainActor in
+                await loadRSSFeed()
+            }
         }
         .onChange(of: showReadEntries) { oldValue, newValue in
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -475,22 +478,19 @@ struct FeedListView: View {
         
         //.listRowBackground(Color.clear)
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            if entry.isRead {
-                // If it's recently read, do not allow making it unread
-                if !recentlyReadLinks.contains(entry.link) {
-                    Button {
-                        markAsUnread(entry)
-                    } label: {
-                        Image(systemName: "circle.dashed")
-                    }
-                    .accessibilityLabel("Als ungelesen markieren")
-                    .tint(theme.uiSwipeColor)
+            if entry.isRead || recentlyReadLinks.contains(entry.link) {
+                Button {
+                    markAsUnread(entry)
+                } label: {
+                    Image(systemName: "eye.slash")
                 }
+                .accessibilityLabel("Als ungelesen markieren")
+                .tint(theme.uiSwipeColor)
             } else {
                 Button {
                     markAsRead(entry)
                 } label: {
-                    Image(systemName: "checkmark.circle")
+                    Image(systemName: "eye")
                 }
                 .accessibilityLabel("Als gelesen markieren")
                 .tint(theme.uiSwipeColor)
@@ -754,11 +754,13 @@ extension FeedListView {
     }
 
     func markAsUnread(_ entry: FeedEntry) {
-        // From recently read you cannot go back to unread
-        guard !recentlyReadLinks.contains(entry.link) else { return }
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
             withAnimation(.easeInOut(duration: 0.18)) {
                 entries[index].isRead = false
+            }
+            // Remove from recently read if present
+            if recentlyReadLinks.contains(entry.link) {
+                recentlyReadLinks.remove(entry.link)
             }
             store.setRead(false, articleID: entry.link)
             persistEntriesCache()
@@ -958,22 +960,42 @@ struct FeedsSettingsViewPlaceholder: View {
                 }
                 .presentationDetents([.fraction(0.5)])
             }
-            .sheet(isPresented: $showEditFeedSheet) {
+            .sheet(isPresented: $showEditFeedSheet, onDismiss: {
+                // Clear selection after dismiss to avoid stale indices
+                editingIndex = nil
+            }) {
                 if let idx = editingIndex, feeds.indices.contains(idx) {
                     EditSingleFeedView(feed: feeds[idx]) { updated in
                         guard let updated = updated else { return }
                         feeds[idx] = updated
                         persistFeeds()
                     }
+                    .presentationDetents([.fraction(0.45)])
+                    .interactiveDismissDisabled(false)
+                } else {
+                    // Fallback in case index is no longer valid
+                    Text("Kein Feed ausgewählt")
+                        .padding()
+                        .presentationDetents([.fraction(0.3)])
                 }
             }
-            .onAppear(perform: restoreFeeds)
+            .onAppear { restoreFeeds() }
+            .onChange(of: savedFeedsData) { _, _ in
+                // Keep in sync with external changes (e.g., onboarding added a feed)
+                restoreFeeds()
+            }
         }
     }
 
     private func restoreFeeds() {
+        guard !savedFeedsData.isEmpty else {
+            feeds = []
+            return
+        }
         if let decoded = try? JSONDecoder().decode([FeedSource].self, from: savedFeedsData) {
             feeds = decoded
+        } else {
+            feeds = []
         }
     }
 
@@ -1143,9 +1165,8 @@ struct PersonalizationViewPlaceholder: View {
     @AppStorage("ui.cards.previewLines") private var previewLines: Int = 3
     @AppStorage("ui.cards.style.fullColor") private var fullColorCards: Bool = false
 
-    @State private var selectedColor: Color = .blue {
-        didSet { theme.setUIAccentColor(selectedColor )}
-    }
+    // Bind directly to theme color so updates propagate immediately via EnvironmentObject
+    @State private var selectedColor: Color = .green
 
     var body: some View {
         NavigationStack {
@@ -1167,7 +1188,12 @@ struct PersonalizationViewPlaceholder: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationLinkIndicatorVisibility(.visible)
             .onAppear {
+                // Initialize from theme so UI reflects current accent
                 selectedColor = theme.uiAccentColor
+            }
+            .onChange(of: selectedColor) { _, newValue in
+                // Persist to theme immediately so other views update their .tint(theme.uiAccentColor)
+                theme.setUIAccentColor(newValue)
             }
         }
     }

@@ -1,0 +1,17 @@
+//
+//  NotiFeeder_WidgetBundle.swift
+//  NotiFeeder Widget
+//
+//  Created by Dyonisos Fergadiotis on 02.02.26.
+//
+
+import WidgetKit
+import SwiftUI
+
+@main
+struct NotiFeeder_WidgetBundle: WidgetBundle {
+    var body: some Widget {
+        NotiFeeder_Widget()
+        NotiFeeder_WidgetControl()
+    }
+}

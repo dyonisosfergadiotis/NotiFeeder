@@ -16,7 +16,7 @@ struct RefreshFeedsIntent: AppIntent {
     }
 
     private static func loadSavedFeeds() -> [FeedSource] {
-        guard let data = UserDefaults.standard.data(forKey: "savedFeeds"),
+        guard let data = FeedStorage.defaults.data(forKey: "savedFeeds"),
               let parsed = try? JSONDecoder().decode([FeedSource].self, from: data) else {
             return []
         }

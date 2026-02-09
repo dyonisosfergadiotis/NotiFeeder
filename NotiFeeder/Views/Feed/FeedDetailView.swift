@@ -3,6 +3,7 @@ import SwiftUI
 import QuartzCore
 import Foundation
 import SwiftData
+import UIKit
 
 extension Color {
     var rgbComponents: (red: Int, green: Int, blue: Int)? {
@@ -30,6 +31,8 @@ struct FeedDetailView: View {
     var feedColor: Color?
     var entriesProvider: () -> [FeedEntry] = { [] }
     var onNavigateToEntry: (FeedEntry, NavigationDirection) -> Void = { _, _ in }
+    /// Optional callback invoked when the read/unread state is toggled in this detail view.
+    var onToggleRead: ((Bool) -> Void)? = nil
 
     enum NavigationDirection {
         case previous
@@ -76,19 +79,22 @@ struct FeedDetailView: View {
         private static let readerSettingsID = UUID()
     }
 
-    init(entry: FeedEntry, feedColor: Color? = nil) {
+    init(entry: FeedEntry, feedColor: Color? = nil, onToggleRead: ((Bool) -> Void)? = nil) {
         self.entry = entry
         self.feedColor = feedColor
+        self.onToggleRead = onToggleRead
     }
 
     init(entry: FeedEntry,
          feedColor: Color? = nil,
          entriesProvider: @escaping () -> [FeedEntry],
-         onNavigateToEntry: @escaping (FeedEntry, NavigationDirection) -> Void) {
+         onNavigateToEntry: @escaping (FeedEntry, NavigationDirection) -> Void,
+         onToggleRead: ((Bool) -> Void)? = nil) {
         self.entry = entry
         self.feedColor = feedColor
         self.entriesProvider = entriesProvider
         self.onNavigateToEntry = onNavigateToEntry
+        self.onToggleRead = onToggleRead
     }
 
     private func currentIndex(in list: [FeedEntry]) -> Int? {
@@ -160,10 +166,7 @@ struct FeedDetailView: View {
                     Button(action: { activeSheet = .readerSettings }) { Image(systemName: "textformat.size") }
                     Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) { Image(systemName: "safari") }
                     VStack{Button(action: { gatherShareContent() }) { Image(systemName: "square.and.arrow.up") }}.padding(.bottom,4)
-                    Button(action: {
-                        isReadLocal.toggle()
-                        store.setRead(isReadLocal, articleID: entry.link)
-                    }) {
+                    Button(action: { onToggleReadAction() }) {
                         Image(systemName: isReadLocal ? "eye.slash" : "eye")
                     }
                 }.padding(.horizontal, 8)
@@ -200,6 +203,12 @@ struct FeedDetailView: View {
                 }
             }
         }
+    }
+    
+    private func onToggleReadAction() {
+        isReadLocal.toggle()
+        store.setRead(isReadLocal, articleID: entry.link)
+        onToggleRead?(isReadLocal)
     }
     
     private func webAccentHexString() -> String {
@@ -239,6 +248,7 @@ struct FeedDetailView: View {
         .onAppear {
             store.markRecentlyRead(articleID: entry.link)
             isReadLocal = store.isRead(articleID: entry.link)
+            onToggleRead?(isReadLocal)
             isBookmarked = isCurrentlyBookmarked()
             bothExpanded = true
         }
@@ -285,6 +295,7 @@ struct FeedDetailView: View {
         let textAlignCSS = readerTextAlignmentRaw == "justified" ? "justify" : readerTextAlignmentRaw
         let rgb = resolvedFeedColor.rgbComponents ?? (0,0,0)
         let background: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.1)"
+        let rawBody = (entry.contentRaw?.isEmpty == false) ? entry.contentRaw! : entry.content
 
         return """
         <html>
@@ -298,7 +309,7 @@ struct FeedDetailView: View {
               iframe { aspect-ratio: 16/9; }
             </style>
           </head>
-          <body>\(fixYouTubeIframes(in: entry.content))</body>
+          <body>\(fixYouTubeIframes(in: rawBody))</body>
         </html>
         """
     }
@@ -338,6 +349,7 @@ struct WebView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         webView.scrollView.delegate = context.coordinator
+        webView.navigationDelegate = context.coordinator
         webView.loadHTMLString(htmlContent, baseURL: nil)
         return webView
     }
@@ -353,7 +365,7 @@ struct WebView: UIViewRepresentable {
         Coordinator(isScrollingDown: $isScrollingDown)
     }
 
-    class Coordinator: NSObject, UIScrollViewDelegate {
+    class Coordinator: NSObject, UIScrollViewDelegate, WKNavigationDelegate {
         @Binding var isScrollingDown: Bool
         private var lastOffset: CGFloat = 0
         private var lastDirectionDown: Bool = false
@@ -409,6 +421,18 @@ struct WebView: UIViewRepresentable {
                 }
             }
         }
+
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if navigationAction.navigationType == .linkActivated,
+               let url = navigationAction.request.url,
+               url.scheme?.lowercased() != "about",
+               url.scheme?.lowercased() != "file" {
+                UIApplication.shared.open(url)
+                decisionHandler(.cancel)
+                return
+            }
+            decisionHandler(.allow)
+        }
     }
 }
 
@@ -419,4 +443,3 @@ struct ShareSheet: UIViewControllerRepresentable {
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
 }
-

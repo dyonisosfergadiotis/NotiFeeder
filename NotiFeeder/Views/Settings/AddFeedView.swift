@@ -59,8 +59,8 @@ struct AddFeedView: View {
                         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
                         let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !trimmedTitle.isEmpty, !trimmedURL.isEmpty else { return }
-                        onSave(trimmedTitle, trimmedURL)
                         theme.setColor(selectedColor, for: trimmedURL)
+                        onSave(trimmedTitle, trimmedURL)
                         dismiss()
                     }.disabled(title.isEmpty || url.isEmpty)
                         .tint(theme.uiAccentColor)

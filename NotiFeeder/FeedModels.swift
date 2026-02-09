@@ -62,6 +62,7 @@ public struct FeedEntry: Identifiable, Hashable, Codable {
     public var shortTitle: String
     public var link: String
     public var content: String
+    public var contentRaw: String?
     public var imageURL: String?
     public var author: String?
     public var sourceTitle: String?
@@ -73,6 +74,7 @@ public struct FeedEntry: Identifiable, Hashable, Codable {
                 shortTitle: String? = nil,
                 link: String,
                 content: String,
+                contentRaw: String? = nil,
                 imageURL: String? = nil,
                 author: String? = nil,
                 sourceTitle: String? = nil,
@@ -83,6 +85,7 @@ public struct FeedEntry: Identifiable, Hashable, Codable {
         self.shortTitle = shortTitle ?? title
         self.link = link
         self.content = content
+        self.contentRaw = contentRaw
         self.imageURL = imageURL
         self.author = author
         self.sourceTitle = sourceTitle
@@ -182,4 +185,15 @@ public struct FeedEntry: Identifiable, Hashable, Codable {
 		let t = shortTitle.trimmingCharacters(in: .whitespacesAndNewlines)
 		return t.isEmpty ? title : t
 	}
+
+    // Deep link for widgets and external launches.
+    public var deepLinkURL: URL? {
+        var components = URLComponents()
+        components.scheme = "notifeeder"
+        components.host = "article"
+        components.queryItems = [
+            URLQueryItem(name: "link", value: link)
+        ]
+        return components.url
+    }
 }

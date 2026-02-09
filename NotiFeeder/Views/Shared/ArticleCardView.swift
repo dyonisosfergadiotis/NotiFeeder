@@ -101,12 +101,12 @@ struct ArticleCardView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(cardBackground)
-                    //.strokeBorder(Color.primary.opacity(0.06), lineWidth: 1).clipped()
+                    .fill(cardBackground )
+                    .strokeBorder(isRead ? cardBackground.opacity(0.1) : feedColor).clipped()
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                    .strokeBorder(isRead ? Color.clear : Color.primary.opacity(0.06), lineWidth: 1)
             }
         }
     }
@@ -137,7 +137,7 @@ struct ArticleCardView: View {
     }
     
     private var pillBackground: Color {
-        !isRead ? Color(feedColor).opacity(0.5) : Color("#E5E5E7")
+        !isRead ? Color(feedColor).opacity(0.5) : Color(feedColor).opacity(0.2)
     }
 
     private func highlightableText(for content: String, baseColor: Color) -> Text {

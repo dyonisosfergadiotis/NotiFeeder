@@ -65,25 +65,6 @@ private extension Date {
     }
 }
 
-private struct ArticleStore {
-    // Minimal read state parser using UserDefaults (shared or standard)
-    // Keys: "readArticles" stored as Set<String> stringified links
-    static let suiteName = "group.notiFeeder"
-    static var sharedDefaults: UserDefaults? {
-        UserDefaults(suiteName: suiteName)
-    }
-
-    static func isRead(link: String) -> Bool {
-        if let shared = sharedDefaults, let readLinks = shared.array(forKey: "readArticles") as? [String] {
-            return readLinks.contains(link)
-        }
-        if let standard = UserDefaults.standard.array(forKey: "readArticles") as? [String] {
-            return standard.contains(link)
-        }
-        return false
-    }
-}
-
 struct Provider: TimelineProvider {
     typealias Entry = UnreadArticlesEntry
 
@@ -135,7 +116,7 @@ struct Provider: TimelineProvider {
         }
 
         let filteredEntries = cachedEntries.filter { feedEntry in
-            !ArticleStore.isRead(link: feedEntry.link) && feedEntry.isRead == false
+            feedEntry.isRead == false
         }
 
         let sortedEntries = filteredEntries.sorted { lhs, rhs in
@@ -218,7 +199,7 @@ extension UIColor {
             a = 255
             r = (int & 0xff0000) >> 16
             g = (int & 0x00ff00) >> 8
-            b = int & 0x0000ff
+            b = (int & 0x0000ff)
         }
         self.init(red: CGFloat(r) / 255,
                   green: CGFloat(g) / 255,
@@ -237,19 +218,19 @@ struct UnreadArticlesWidgetEntryView: View {
             smallView
                 .widgetAccentable()
                 .containerBackground(for: .widget) {
-                    entry.accent
+                    Color.clear
                 }
         case .systemMedium, .systemLarge:
             largerView
                 .widgetAccentable()
                 .containerBackground(for: .widget) {
-                    entry.accent
+                    Color.clear
                 }
         default:
             smallView
                 .widgetAccentable()
                 .containerBackground(for: .widget) {
-                    entry.accent
+                    Color.clear
                 }
         }
     }
@@ -333,9 +314,8 @@ struct UnreadArticlesWidgetEntryView: View {
     }
 }
 
-@main
-struct UnreadArticlesWidget: Widget {
-    let kind: String = "UnreadArticlesWidget"
+struct LegacyUnreadArticlesWidget: Widget {
+    let kind: String = "LegacyUnreadArticlesWidget"
 
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: Provider()) { entry in
@@ -408,3 +388,4 @@ struct UnreadArticlesWidget_Previews: PreviewProvider {
         return UnreadArticlesEntry(date: now, items: Array(items.prefix(family == .systemLarge ? 5 : 2)), accent: accent, isTinted: true)
     }
 }
+

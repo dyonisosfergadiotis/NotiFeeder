@@ -16,10 +16,11 @@ struct BookmarksView: View {
         filter: #Predicate<FeedEntryModel> { $0.isBookmarked }
     ) var bookmarkedEntries: [FeedEntryModel]
     @EnvironmentObject private var theme: ThemeSettings
-    @AppStorage("savedFeeds") private var savedFeedsData: Data = Data()
+    @AppStorage("savedFeeds", store: FeedStorage.defaults) private var savedFeedsData: Data = Data()
     @AppStorage("cachedEntries") private var cachedEntriesData: Data = Data() // <-- neu
     @State private var feeds: [FeedSource] = []
     @State private var path: [FeedEntry] = []
+    @State private var listAppearToken = UUID()
 
     @State private var sortOption: BookmarkSortOption = .addedNewest
     
@@ -73,12 +74,14 @@ struct BookmarksView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(Array(sortedBookmarkedEntries), id: \.link) { entry in
+                            ForEach(Array(sortedBookmarkedEntries.enumerated()), id: \.element.link) { index, entry in
                                 BookmarkEntryRow(
                                     entry: entry,
                                     feeds: $feeds,
                                     path: $path,
-                                    cachedEntriesData: cachedEntriesData
+                                    cachedEntriesData: cachedEntriesData,
+                                    appearDelay: min(Double(index) * 0.015, 0.12),
+                                    appearTrigger: listAppearToken
                                 )
                             } // end ForEach
                         } // end LazyVStack
@@ -126,6 +129,7 @@ struct BookmarksView: View {
                                  title: m.title,
                                  link: m.link,
                                  content: m.content,
+                                 contentRaw: m.contentRaw ?? m.content,
                                  author: m.author,
                                  sourceTitle: m.sourceTitle,
                                  feedURL: m.sourceURL,
@@ -149,6 +153,12 @@ struct BookmarksView: View {
         .onAppear(perform: loadFeeds)
         .onChange(of: savedFeedsData) { _, _ in
             loadFeeds()
+        }
+        .onChange(of: sortOption) { _, _ in
+            listAppearToken = UUID()
+        }
+        .onChange(of: bookmarkedEntries.count) { _, _ in
+            listAppearToken = UUID()
         }
     }
 }
@@ -298,6 +308,8 @@ private struct BookmarkEntryRow: View {
     @Binding var feeds: [FeedSource]
     @Binding var path: [FeedEntry]
     let cachedEntriesData: Data
+    let appearDelay: Double
+    let appearTrigger: AnyHashable
 
     @EnvironmentObject private var store: ArticleStore
     @EnvironmentObject private var theme: ThemeSettings
@@ -326,16 +338,19 @@ private struct BookmarkEntryRow: View {
             Button {
                 path.append(d)
             } label: {
-                ArticleCardView(
+                let card = ArticleCardView(
                     feedTitle: feedName,
                     feedColor: feedColor,
                     title: d.title,
-                    summary: HTMLText.stripHTML(d.content),
+                    summary: d.content,
                     isRead: store.isRead(articleID: d.link),
                     date: parsePubDate(d.pubDateString) ?? original.date,
                     isBookmarked: true,
                     highlightColor: feedColor
                 )
+
+                card
+                    .articleCardAppear(trigger: appearTrigger, delay: appearDelay, glowColor: feedColor)
             }
             .buttonStyle(.plain)
         }
@@ -369,6 +384,7 @@ private struct BookmarkEntryRow: View {
             title: entryModel.title,
             link: entryModel.link,
             content: entryModel.content,
+            contentRaw: entryModel.contentRaw ?? entryModel.content,
             author: entryModel.author ?? "Unbekannt",
             sourceTitle: entryModel.sourceTitle ?? "Unbekannt",
             feedURL: entryModel.sourceURL,
@@ -402,16 +418,19 @@ private struct BookmarkEntryRow: View {
             Button {
                 path.append(detailEntry)
             } label: {
-                ArticleCardView(
+                let card = ArticleCardView(
                     feedTitle: feedName,
                     feedColor: feedColor,
                     title: entryModel.title,
-                    summary: HTMLText.stripHTML(entryModel.content),
+                    summary: entryModel.content,
                     isRead: isRead,
                     date: displayDate,
                     isBookmarked: true,
                     highlightColor: feedColor
                 )
+
+                card
+                    .articleCardAppear(trigger: appearTrigger, delay: appearDelay, glowColor: feedColor)
             }
             .buttonStyle(.plain)
         }
@@ -499,4 +518,3 @@ private struct BookmarkEntryRow: View {
         }
     }
 }
-

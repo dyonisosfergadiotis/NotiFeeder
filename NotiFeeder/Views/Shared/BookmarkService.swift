@@ -27,7 +27,8 @@ enum BookmarkService {
             existing.title = entry.title
             existing.shortTitle = entry.shortTitle
             existing.link = entry.link
-            existing.content = HTMLText.stripHTML(entry.content)
+            existing.content = entry.content
+            existing.contentRaw = entry.contentRaw
             existing.author = entry.author
             existing.sourceTitle = entry.sourceTitle
             existing.sourceURL = entry.feedURL
@@ -40,7 +41,8 @@ enum BookmarkService {
                 title: entry.title,
                 shortTitle: entry.shortTitle,
                 link: entry.link,
-                content: HTMLText.stripHTML(entry.content),
+                content: entry.content,
+                contentRaw: entry.contentRaw,
                 author: entry.author,
                 sourceTitle: entry.sourceTitle,
                 sourceURL: entry.feedURL,

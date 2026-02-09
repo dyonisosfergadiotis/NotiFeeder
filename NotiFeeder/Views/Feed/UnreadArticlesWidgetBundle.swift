@@ -2,10 +2,9 @@
 import WidgetKit
 import SwiftUI
 
-@main
-struct UnreadArticlesWidgetBundle: WidgetBundle {
+struct UnreadArticlesWidgetsBundle: WidgetBundle {
     @WidgetBundleBuilder
     var body: some Widget {
-        UnreadArticlesWidget()
+        LegacyUnreadArticlesWidget()
     }
 }

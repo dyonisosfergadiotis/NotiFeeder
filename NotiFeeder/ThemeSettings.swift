@@ -22,15 +22,15 @@ struct FeedColorOption: Identifiable, Equatable {
     }
 
     static let defaultPalette: [FeedColorOption] = [
-        FeedColorOption(name: "Karmin", hex: "#FF6F61"),
-        FeedColorOption(name: "Mandarine", hex: "#FF9F1C"),
-        FeedColorOption(name: "Goldtulpe", hex: "#F6C344"),
-        FeedColorOption(name: "Limette", hex: "#80C904"),
-        FeedColorOption(name: "Jade", hex: "#2EC4B6"),
-        FeedColorOption(name: "Meerblau", hex: "#2D9CDB"),
-        FeedColorOption(name: "Indigo", hex: "#4C63D2"),
-        FeedColorOption(name: "Amethyst", hex: "#9B5DE5"),
-        FeedColorOption(name: "Sand", hex: "#D4A373")
+        FeedColorOption(name: "Karmin", hex: "#F3A2A2"),
+        FeedColorOption(name: "Mandarine", hex: "#F4B989"),
+        FeedColorOption(name: "Goldtulpe", hex: "#F7D783"),
+        FeedColorOption(name: "Limette", hex: "#CFE08E"),
+        FeedColorOption(name: "Jade", hex: "#B7E0C8"),
+        FeedColorOption(name: "Meerblau", hex: "#A6DEDA"),
+        FeedColorOption(name: "Indigo", hex: "#A9C8F2"),
+        FeedColorOption(name: "Amethyst", hex: "#C4AEEF"),
+        FeedColorOption(name: "Sand", hex: "#DDBF8F")
     ]
 
     static func option(for hex: String) -> FeedColorOption? {
@@ -44,8 +44,10 @@ final class ThemeSettings: ObservableObject {
         static let uiAccentHex = "uiAccentHex"
     }
 
+    private static let appGroupSuite = "group.notiFeeder"
+
     /// Carefully chosen accent tone reserved for the overall UI chrome.
-    @Published private(set) var uiAccentHex: String = "#9CCFFF" // default; overridden in init
+    @Published private(set) var uiAccentHex: String = "#A9C8F2" // default; overridden in init
 
     private let defaults: UserDefaults
     private(set) var decoder = JSONDecoder()
@@ -57,6 +59,7 @@ final class ThemeSettings: ObservableObject {
         self.defaults = userDefaults
         loadFeedColors()
         self.uiAccentHex = loadUIAccentHex()
+        syncAccentToAppGroup()
     }
 
     var uiAccentColor: Color {
@@ -107,6 +110,12 @@ final class ThemeSettings: ObservableObject {
         saveFeedColors()
     }
 
+    func setColorHex(_ hex: String, for feedURL: String) {
+        let normalized = normalizeHex(hex)
+        feedColorMap[feedURL] = normalized
+        saveFeedColors()
+    }
+
     func resetColor(for feedURL: String) {
         feedColorMap.removeValue(forKey: feedURL)
         saveFeedColors()
@@ -132,15 +141,38 @@ final class ThemeSettings: ObservableObject {
         }
     }
 
+    private func normalizeHex(_ hex: String) -> String {
+        let trimmed = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("#") {
+            return trimmed
+        }
+        return "#" + trimmed
+    }
+
     private func loadUIAccentHex() -> String {
         if let stored = defaults.string(forKey: Keys.uiAccentHex), !stored.isEmpty {
             return stored
         }
-        return "#9CCFFF"
+        if let groupStored = appGroupDefaults?.string(forKey: Keys.uiAccentHex), !groupStored.isEmpty {
+            return groupStored
+        }
+        return "#A9C8F2"
     }
 
     private func saveUIAccentHex() {
         defaults.set(uiAccentHex, forKey: Keys.uiAccentHex)
+        appGroupDefaults?.set(uiAccentHex, forKey: Keys.uiAccentHex)
+    }
+
+    private var appGroupDefaults: UserDefaults? {
+        UserDefaults(suiteName: Self.appGroupSuite)
+    }
+
+    private func syncAccentToAppGroup() {
+        guard let group = appGroupDefaults else { return }
+        if group.string(forKey: Keys.uiAccentHex) != uiAccentHex {
+            group.set(uiAccentHex, forKey: Keys.uiAccentHex)
+        }
     }
 }
 
@@ -231,4 +263,3 @@ struct ThemeSettings_BubblesPreview: View {
     ThemeSettings_BubblesPreview()
 }
 #endif
-

@@ -31,6 +31,24 @@ struct FaviconCache {
         return nil
     }
 
+    static func cachedImageAllowingStale(for feedURL: URL) -> UIImage? {
+        guard let url = cacheURL(for: feedURL),
+              FileManager.default.fileExists(atPath: url.path) else {
+            return nil
+        }
+        return UIImage(contentsOfFile: url.path)
+    }
+
+    static func cachedModificationDate(for feedURL: URL) -> Date? {
+        guard let url = cacheURL(for: feedURL),
+              FileManager.default.fileExists(atPath: url.path),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let modificationDate = attributes[.modificationDate] as? Date else {
+            return nil
+        }
+        return modificationDate
+    }
+
     static func store(data: Data, for feedURL: URL) {
         guard let url = cacheURL(for: feedURL) else { return }
         try? data.write(to: url)

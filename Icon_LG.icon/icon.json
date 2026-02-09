@@ -41,24 +41,19 @@
                 ],
                 "orientation" : {
                   "start" : {
-                    "x" : 0.5,
-                    "y" : 1
+                    "x" : 0,
+                    "y" : 0
                   },
                   "stop" : {
-                    "x" : 0.5,
-                    "y" : 0
+                    "x" : 1,
+                    "y" : 1
                   }
                 }
               }
             },
             {
               "appearance" : "tinted",
-              "value" : {
-                "linear-gradient" : [
-                  "display-p3:0.65172,0.80431,0.98272,1.00000",
-                  "srgb:0.38045,0.51117,0.63391,1.00000"
-                ]
-              }
+              "value" : "none"
             }
           ],
           "glass" : true,

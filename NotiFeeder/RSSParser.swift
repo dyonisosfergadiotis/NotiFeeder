@@ -26,18 +26,11 @@ class RSSParser: NSObject, XMLParserDelegate {
     func parse(data: Data) -> [FeedEntry] {
         entries.removeAll()
         
-        // 🧹 RSS-Inhalt als String bereinigen
+        // 🧹 RSS-Inhalt minimal bereinigen (XMLParser akzeptiert z. B. kein &nbsp;)
         guard var xmlString = String(data: data, encoding: .utf8) else { return [] }
-
-        // Fehlerhafte Entities & offene Tags reparieren
-        xmlString = xmlString.replacingOccurrences(of: "&nbsp;", with: "")
-        xmlString = xmlString.replacingOccurrences(of: "&(?!(amp|lt|gt|quot|apos|#\\d+);)", with: "&amp;", options: .regularExpression)
-        xmlString = xmlString.replacingOccurrences(of: "&amp;", with: "&")
-        xmlString = xmlString.replacingOccurrences(of: "&#(0|1|2|3|4|5|6|7|8|9)(0|1|2|3|4|5|6|7|8|9);", with: "", options: .regularExpression)
-        xmlString = xmlString.replacingOccurrences(of: "&[A-Za-z]+;", with: "", options: .regularExpression)
+        xmlString = xmlString.replacingOccurrences(of: "&nbsp;", with: " ")
         xmlString = xmlString.replacingOccurrences(of: "<br>", with: "<br/>")
 
-        // Neue Parser-Instanz mit bereinigten Daten
         guard let cleanData = xmlString.data(using: .utf8) else { return [] }
         let parser = XMLParser(data: cleanData)
         parser.delegate = self
@@ -78,18 +71,19 @@ class RSSParser: NSObject, XMLParserDelegate {
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         if elementName == "item" {
             // Falls kein Bild direkt angegeben ist, versuche es aus <img src="..."> herauszulesen
+            let rawDescription = currentDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             if currentImageURL.isEmpty {
                 if let regex = try? NSRegularExpression(pattern: "<img[^>]+src\\s*=\\s*['\"]([^'\"]+)['\"][^>]*>", options: .caseInsensitive) {
-                    let range = NSRange(location: 0, length: currentDescription.utf16.count)
-                    if let match = regex.firstMatch(in: currentDescription, options: [], range: range),
-                       let imgRange = Range(match.range(at: 1), in: currentDescription) {
-                        currentImageURL = String(currentDescription[imgRange])
+                    let range = NSRange(location: 0, length: rawDescription.utf16.count)
+                    if let match = regex.firstMatch(in: rawDescription, options: [], range: range),
+                       let imgRange = Range(match.range(at: 1), in: rawDescription) {
+                        currentImageURL = String(rawDescription[imgRange])
                     }
                 }
             }
 
-            // HTML-Tags aus Beschreibung entfernen (optional)
-            let cleanDescription = currentDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            // HTML-Tags aus Beschreibung entfernen
+            let cleanDescription = HTMLText.stripHTML(rawDescription)
             let cleanTitle = currentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             
             let entry = FeedEntry(
@@ -97,6 +91,7 @@ class RSSParser: NSObject, XMLParserDelegate {
                 shortTitle: generateShortTitle(for: cleanTitle),
                 link: currentLink.trimmingCharacters(in: .whitespacesAndNewlines),
                 content: cleanDescription,
+                contentRaw: rawDescription,
                 imageURL: currentImageURL.isEmpty ? nil : currentImageURL,
                 author: currentAuthor.isEmpty ? nil : currentAuthor.trimmingCharacters(in: .whitespacesAndNewlines),
                 pubDateString: currentPubDate.isEmpty ? nil : currentPubDate.trimmingCharacters(in: .whitespacesAndNewlines)

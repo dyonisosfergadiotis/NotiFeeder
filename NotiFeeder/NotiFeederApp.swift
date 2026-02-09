@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     private func loadFeedsFromStorage() -> [FeedSource] {
-        if let data = UserDefaults.standard.data(forKey: "savedFeeds") {
+        if let data = FeedStorage.defaults.data(forKey: "savedFeeds") {
             do {
                 let feeds = try JSONDecoder().decode([FeedSource].self, from: data)
                 return feeds
@@ -41,4 +41,3 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         return [FeedSource(title: "MacRumors", url: "https://feeds.macrumors.com/MacRumors-All")]
     }
 }
-

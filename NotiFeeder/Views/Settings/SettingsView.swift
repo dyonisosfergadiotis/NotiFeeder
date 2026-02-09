@@ -36,6 +36,29 @@ struct SettingsView: View {
                 .environmentObject(theme)
                 
                 Section(header: Text("Personalisierung")) {
+                    NavigationLink {
+                        WidgetSettingsView()
+                            .environmentObject(theme)
+                    } label: {
+                        HStack(spacing: 14) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(theme.uiAccentColor.opacity(0.18))
+                                    .frame(width: 36, height: 36)
+                                Image(systemName: "square.grid.2x2")
+                                    .foregroundStyle(theme.uiAccentColor)
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Widgets")
+                                    .appTitle()
+                                Text("Transparenz & Hintergrund")
+                                    .appSecondary()
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 6)
+                    }
+
                     Button {
                         showingAccentPicker = true
                     } label: {
@@ -127,25 +150,7 @@ private struct AccentColorPickerSheet: View {
     let selected: Color
     let onPick: (Color) -> Void
 
-    // 12 pastel colors (3x4 grid)
-    private let pastelColors: [Color] = [
-        Color(red: 0.98, green: 0.68, blue: 0.68), // Rot
-        Color(red: 0.99, green: 0.78, blue: 0.63), // Orange
-        Color(red: 0.99, green: 0.88, blue: 0.60), // Gelb
-        Color(red: 0.97, green: 0.93, blue: 0.65), // Gelb-Grün
-        Color(red: 0.90, green: 0.95, blue: 0.67), // Grün
-        Color(red: 0.80, green: 0.95, blue: 0.72), // Grün-Blau
-        Color(red: 0.72, green: 0.93, blue: 0.78), // Türkis
-        Color(red: 0.64, green: 0.88, blue: 0.88), // Blau-Grün
-        Color(red: 0.64, green: 0.84, blue: 0.92), // Hellblau
-        Color(red: 0.70, green: 0.82, blue: 0.95), // Blau
-        Color(red: 0.75, green: 0.78, blue: 0.98), // Blau-Violett
-        Color(red: 0.80, green: 0.74, blue: 0.97), // Violett
-        Color(red: 0.88, green: 0.78, blue: 0.96), // Rose-Violett
-        Color(red: 0.92, green: 0.82, blue: 0.95), // Rose
-        Color(red: 0.96, green: 0.88, blue: 0.94), // Rosa-Hell
-        Color(red: 0.99, green: 0.96, blue: 0.99)  // Weiß
-    ]
+    private let accentPalette = FeedColorOption.palette
 
     private let columns: [GridItem] = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
 
@@ -156,8 +161,8 @@ private struct AccentColorPickerSheet: View {
                     columns: Array(repeating: GridItem(.flexible(), spacing: 18), count: 4),
                     spacing: 22
                 ) {
-                    ForEach(pastelColors.indices, id: \.self) { idx in
-                        let color = pastelColors[idx]
+                    ForEach(accentPalette) { option in
+                        let color = option.color
                         Button {
                             onPick(color)
                         } label: {
@@ -173,7 +178,7 @@ private struct AccentColorPickerSheet: View {
                             }
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Farbe \(idx + 1)")
+                        .accessibilityLabel(option.name)
                     }
                 }
                 .padding(.top, 7.5)

@@ -11,7 +11,9 @@ import SwiftUI
 @main
 struct NotiFeeder_WidgetBundle: WidgetBundle {
     var body: some Widget {
-        NotiFeeder_Widget()
+        NotiFeeder_Widget_Small()
+        NotiFeeder_Widget_Medium()
+        NotiFeeder_Widget_Large()
         NotiFeeder_WidgetControl()
     }
 }

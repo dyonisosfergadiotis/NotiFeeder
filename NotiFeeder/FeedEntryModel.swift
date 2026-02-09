@@ -15,6 +15,7 @@ final class FeedEntryModel: Identifiable, Hashable {
     var shortTitle: String
     var link: String
     var content: String
+    var contentRaw: String?
     var author: String?
     var sourceTitle: String?
     var sourceURL: String?
@@ -31,6 +32,7 @@ final class FeedEntryModel: Identifiable, Hashable {
         shortTitle: String? = nil,
         link: String,
         content: String,
+        contentRaw: String? = nil,
         author: String? = nil,
         sourceTitle: String? = nil,
         sourceURL: String? = nil,
@@ -44,6 +46,7 @@ final class FeedEntryModel: Identifiable, Hashable {
         self.shortTitle = shortTitle ?? title
         self.link = link
         self.content = content
+        self.contentRaw = contentRaw
         self.author = author
         self.sourceTitle = sourceTitle
         self.sourceURL = sourceURL

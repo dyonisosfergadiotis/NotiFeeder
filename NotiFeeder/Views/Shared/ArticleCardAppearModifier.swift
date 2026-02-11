@@ -111,14 +111,14 @@ private struct ArticleCardAppearModifier: ViewModifier {
         }
         didAnimate = true
         let clamped = max(0.2, min(1.0, speedFactor))
-        let arrival = Animation.easeOut(duration: 0.16 * clamped).delay(delay)
-        let settle = Animation.spring(response: 0.22 * clamped,
+        let arrival = Animation.easeOut(duration: 0.13 * clamped).delay(delay)
+        let settle = Animation.spring(response: 0.19 * clamped,
                                       dampingFraction: 0.8,
-                                      blendDuration: 0.12 * clamped)
+                                      blendDuration: 0.1 * clamped)
         withAnimation(arrival) {
             phase = .arrival
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (0.16 * clamped) + delay) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (0.13 * clamped) + delay) {
             withAnimation(settle) {
                 phase = .settled
             }

@@ -9,6 +9,13 @@ import SwiftUI
 import SwiftData
 import Foundation
 
+private struct BookmarksScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct BookmarksView: View {
     @Environment(\.modelContext) private var context
     @EnvironmentObject private var store: ArticleStore
@@ -21,6 +28,9 @@ struct BookmarksView: View {
     @State private var feeds: [FeedSource] = []
     @State private var path: [FeedEntry] = []
     @State private var listAppearToken = UUID()
+    @State private var lastScrollOffset: CGFloat = 0
+    @State private var lastScrollTime: TimeInterval = 0
+    @State private var scrollSpeed: Double = 0
 
     @State private var sortOption: BookmarkSortOption = .addedNewest
     
@@ -51,6 +61,16 @@ struct BookmarksView: View {
     private var sortIconName: String {
         sortOption.iconName
     }
+    private var animationSpeedFactor: Double {
+        let normalized = 1.0 / (1.0 + (scrollSpeed / 600.0))
+        return max(0.2, min(1.0, normalized))
+    }
+    private var animationDelayBoost: Double {
+        // Start earlier only when scrolling fast; keep slow-scroll timing unchanged.
+        guard scrollSpeed > 420 else { return 0 }
+        let t = min(1.0, (scrollSpeed - 420.0) / 1200.0)
+        return 0.02 + (0.06 * t)
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -75,17 +95,40 @@ struct BookmarksView: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(Array(sortedBookmarkedEntries.enumerated()), id: \.element.link) { index, entry in
+                                let baseDelay = min(Double(index) * 0.015, 0.12)
+                                let appearDelay = max(0, (baseDelay * animationSpeedFactor) - animationDelayBoost)
                                 BookmarkEntryRow(
                                     entry: entry,
                                     feeds: $feeds,
                                     path: $path,
                                     cachedEntriesData: cachedEntriesData,
-                                    appearDelay: min(Double(index) * 0.015, 0.12),
+                                    appearDelay: appearDelay,
                                     appearTrigger: listAppearToken
                                 )
                             } // end ForEach
                         } // end LazyVStack
                     } // end ScrollView
+                    .coordinateSpace(name: "bookmarkScroll")
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear
+                                .preference(
+                                    key: BookmarksScrollOffsetPreferenceKey.self,
+                                    value: proxy.frame(in: .named("bookmarkScroll")).minY
+                                )
+                        }
+                    )
+                    .onPreferenceChange(BookmarksScrollOffsetPreferenceKey.self) { newOffset in
+                        let now = CACurrentMediaTime()
+                        if lastScrollTime > 0 {
+                            let delta = newOffset - lastScrollOffset
+                            let dt = max(now - lastScrollTime, 0.016)
+                            let speed = abs(Double(delta)) / dt
+                            scrollSpeed = (scrollSpeed * 0.7) + (speed * 0.3)
+                        }
+                        lastScrollOffset = newOffset
+                        lastScrollTime = now
+                    }
                     .background(Color(.systemGroupedBackground))
                  }
              }

@@ -3,6 +3,8 @@ import Foundation
 // MARK: - DateFormatter Extension (Formatter Definitions)
 
 extension DateFormatter {
+    private static let germanLocale = Locale(identifier: "de_DE")
+
     /// RFC 822 with four-digit year, e.g. "Tue, 25 Nov 2025 12:34:56 GMT"
     static let rfc822YYYY: DateFormatter = {
         let formatter = DateFormatter()
@@ -27,7 +29,7 @@ extension DateFormatter {
 
     static let localized: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.locale = .current
+        formatter.locale = germanLocale
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter
@@ -37,7 +39,7 @@ extension DateFormatter {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         formatter.dateStyle = .none
-        formatter.locale = .current
+        formatter.locale = germanLocale
         return formatter
     }()
 
@@ -45,7 +47,7 @@ extension DateFormatter {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .none
-        formatter.locale = .current
+        formatter.locale = germanLocale
         return formatter
     }()
 }

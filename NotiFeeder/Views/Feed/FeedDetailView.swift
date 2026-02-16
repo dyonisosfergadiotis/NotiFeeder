@@ -62,6 +62,10 @@ struct FeedDetailView: View {
     @State private var activeSheet: ActiveSheet?
     @State private var isReadLocal: Bool = false
     @State private var isBookmarked: Bool = false
+    @State private var pendingNavigationDirection: NavigationDirection?
+    @State private var contentOffset: CGFloat = 0
+    @State private var contentOpacity: Double = 1
+    @State private var hasAppeared = false
     @AppStorage("readerFontScale") private var readerFontScale: Double = 1.0
     @AppStorage("readerFontFamily") private var readerFontFamily: String = ReaderFontFamily.rounded.rawValue
     @AppStorage("readerLineSpacing") private var readerLineSpacing: Double = 1.4
@@ -117,6 +121,7 @@ struct FeedDetailView: View {
         let list = entriesProvider()
         guard !list.isEmpty, let currentIndex = currentIndex(in: list), currentIndex > list.startIndex else { return }
         let target = list[list.index(before: currentIndex)]
+        pendingNavigationDirection = .previous
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         withAnimation(.smooth(duration: 0.22)) { onNavigateToEntry(target, .previous) }
     }
@@ -127,27 +132,94 @@ struct FeedDetailView: View {
         let nextIndex = list.index(after: currentIndex)
         guard nextIndex < list.endIndex else { return }
         let target = list[nextIndex]
+        pendingNavigationDirection = .next
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         withAnimation(.smooth(duration: 0.22)) { onNavigateToEntry(target, .next) }
     }
 
+    private var publishDateLabel: String? {
+        guard let dateString = entry.pubDateString, !dateString.isEmpty else { return nil }
+        let parsed = DateParser.parse(dateString)
+        return parsed != Date.distantPast ? DateFormatter.localized.string(from: parsed) : dateString
+    }
+
+    private var readingTimeLabel: String {
+        let source = (entry.contentRaw?.isEmpty == false) ? entry.contentRaw! : entry.content
+        let plainText = HTMLText.stripHTML(source)
+        let wordCount = plainText.split { $0.isWhitespace || $0.isNewline }.count
+        let imageCount = countImages(in: source)
+        let wordsPerMinute = 210.0
+        let textMinutes = Double(wordCount) / wordsPerMinute
+        let imageMinutes = min(Double(imageCount) * 12.0 / 60.0, 1.0)
+        let minutes = max(1, Int(ceil(textMinutes + imageMinutes)))
+        return "\(minutes) Min."
+    }
+
+    private func countImages(in html: String) -> Int {
+        guard let regex = try? NSRegularExpression(pattern: "<img\\b", options: [.caseInsensitive]) else {
+            return 0
+        }
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        return regex.numberOfMatches(in: html, options: [], range: range)
+    }
+
+    private func animateEntryTransition() {
+        let direction = pendingNavigationDirection
+        pendingNavigationDirection = nil
+
+        let startOffset: CGFloat
+        switch direction {
+        case .next:
+            startOffset = 26
+        case .previous:
+            startOffset = -26
+        case .none:
+            startOffset = 14
+        }
+
+        contentOffset = startOffset
+        contentOpacity = 0
+        withAnimation(.easeOut(duration: 0.24)) {
+            contentOffset = 0
+            contentOpacity = 1
+        }
+    }
+
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 6) {
+            Text(entry.title)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .truncationMode(.tail)
+                .minimumScaleFactor(0.6)
+                .allowsTightening(true)
+
             HStack(spacing: 4) {
-                Text("von \(entry.author ?? "Unbekannt")")
+                Text("\(entry.author ?? "Unbekannt")")
                 Text("·")
                 Text(entry.sourceTitle ?? "Unbekannte Quelle")
             }
             .font(.subheadline)
             .foregroundColor(.secondary)
-            if let dateString = entry.pubDateString {
-                let parsed = DateParser.parse(dateString)
-                Text(parsed != Date.distantPast ? DateFormatter.localized.string(from: parsed) : dateString)
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
+
+            HStack(spacing: 8) {
+                if let publishDateLabel {
+                    Text(publishDateLabel)
+                }
+                Spacer(minLength: 8)
+                HStack(spacing: 4) {
+                    Image(systemName: "eyeglasses")
+                    Text(readingTimeLabel)
+                }
+                .multilineTextAlignment(.trailing)
             }
+            .font(.footnote)
+            .foregroundColor(.secondary)
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.bottom)
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
         .background(
             LinearGradient(
@@ -220,13 +292,21 @@ struct FeedDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            headerView
+            if !isScrollingDown {
+                headerView
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)),
+                                            removal: .opacity.combined(with: .move(edge: .top))))
+            }
             WebView(webView: webView,
                     htmlContent: formattedHTML(accentHex: webAccentHexString()),
                     isScrollingDown: $isScrollingDown)
                 .frame(maxHeight: .infinity)
                 .edgesIgnoringSafeArea(.bottom)
         }
+        .animation(.interactiveSpring(response: 0.36, dampingFraction: 0.88, blendDuration: 0.2), value: isScrollingDown)
+        .offset(x: contentOffset)
+        .opacity(contentOpacity)
+        .background(headerTint.opacity(0.3))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: { toggleBookmark() }) {
@@ -243,17 +323,21 @@ struct FeedDetailView: View {
             dynamicBottomToolbar
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationTitle(entry.title)
+        .navigationTitle(isScrollingDown ? entry.title : "")
         .tint(feedColor)
         .onAppear {
             store.markRecentlyRead(articleID: entry.link)
             isReadLocal = store.isRead(articleID: entry.link)
-            onToggleRead?(isReadLocal)
             isBookmarked = isCurrentlyBookmarked()
             bothExpanded = true
+            hasAppeared = true
+        }
+        .onChange(of: entry.link) { _, _ in
+            guard hasAppeared else { return }
+            animateEntryTransition()
         }
         .onChange(of: isScrollingDown) { _, scrollingDown in
-            withAnimation(.snappy(duration: 0.25)) {
+            withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.88, blendDuration: 0.2)) {
                 if scrollingDown {
                     isLeftBarExpanded = false
                     isRightBarExpanded = false
@@ -381,12 +465,16 @@ struct WebView: UIViewRepresentable {
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             let currentOffset = scrollView.contentOffset.y
             let now = CACurrentMediaTime()
+            let topInset = scrollView.adjustedContentInset.top
+            let bottomInset = scrollView.adjustedContentInset.bottom
+            let minOffsetY = -topInset
+            let maxOffsetY = max(minOffsetY, scrollView.contentSize.height - scrollView.bounds.height + bottomInset)
 
             // Only react to real user scrolling
             guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
 
             // Near top: always expand
-            if currentOffset <= 5 {
+            if currentOffset <= minOffsetY + 5 {
                 updateScrollState(false)
                 lastOffset = currentOffset
                 lastDirectionDown = false
@@ -396,6 +484,14 @@ struct WebView: UIViewRepresentable {
 
             let delta = currentOffset - lastOffset
             let isDown = delta > 0
+
+            let isBottomBounce = currentOffset > maxOffsetY + 2
+            let nearBottom = currentOffset >= maxOffsetY - 20
+            if isBottomBounce || (nearBottom && !isDown) {
+                lastOffset = currentOffset
+                lastUpdateTime = now
+                return
+            }
 
             // Hysteresis: ignore tiny moves and too frequent updates
             guard abs(delta) >= minDelta || (isDown != lastDirectionDown) else { return }

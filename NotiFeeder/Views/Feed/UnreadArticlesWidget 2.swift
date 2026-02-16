@@ -247,7 +247,7 @@ struct UnreadArticlesWidgetEntryView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                        Text(item.date, format: .dateTime.hour().minute().month().day())
+                        Text(item.date, format: .dateTime.hour().minute().month().day().locale(Locale(identifier: "de_DE")))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -296,7 +296,7 @@ struct UnreadArticlesWidgetEntryView: View {
                         HStack(spacing: 6) {
                             Text(item.feedTitle)
                             Text("•")
-                            Text(item.date, format: .dateTime.hour().minute().month().day())
+                            Text(item.date, format: .dateTime.hour().minute().month().day().locale(Locale(identifier: "de_DE")))
                         }
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -388,4 +388,3 @@ struct UnreadArticlesWidget_Previews: PreviewProvider {
         return UnreadArticlesEntry(date: now, items: Array(items.prefix(family == .systemLarge ? 5 : 2)), accent: accent, isTinted: true)
     }
 }
-

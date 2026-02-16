@@ -1037,7 +1037,7 @@ struct NotiFeeder_WidgetEntryView: View {
                                 .lineLimit(1)
                             Spacer(minLength: 8)
                             if Calendar.current.isDateInToday(item.date) {
-                                Text(item.date, format: .dateTime.hour().minute())
+                                Text(item.date, format: .dateTime.hour().minute().locale(Locale(identifier: "de_DE")))
                                     .font(metaFont)
                                     .foregroundStyle(.secondary)
                                     .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)
@@ -1167,7 +1167,7 @@ struct NotiFeeder_WidgetEntryView: View {
                     )
                 Spacer(minLength: 6)
                 if Calendar.current.isDateInToday(item.date) {
-                    Text(item.date, format: .dateTime.hour().minute())
+                    Text(item.date, format: .dateTime.hour().minute().locale(Locale(identifier: "de_DE")))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)

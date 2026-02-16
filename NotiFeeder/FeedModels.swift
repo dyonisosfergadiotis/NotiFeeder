@@ -174,7 +174,7 @@ public struct FeedEntry: Identifiable, Hashable, Codable {
 	public var formattedPubDate: String? {
 		guard let date = parsedPubDate else { return nil }
 		let df = DateFormatter()
-		df.locale = Locale.current
+		df.locale = Locale(identifier: "de_DE")
 		df.dateStyle = .medium
 		df.timeStyle = .short
 		return df.string(from: date)

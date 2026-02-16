@@ -148,6 +148,7 @@ struct FeedListView: View {
     @State private var loadingFeedIDs: Set<String> = []
     @State private var showOnlyBookmarks: Bool = false
     @State private var showBookmarkFilterPill: Bool = false
+    @State private var showDummyFilterTwo: Bool = false
     
     @State private var refreshTask: Task<Void, Never>? = nil
     @State private var lastRefreshDate: Date? = nil
@@ -346,6 +347,9 @@ struct FeedListView: View {
                 didRestoreCachedEntries = true
                 restoreCachedEntries()
             }
+            if selectedFeedIDs.isEmpty {
+                selectedFeedIDs = Set(feeds.map { $0.id })
+            }
             showBookmarkFilterPill = !bookmarkedLinks.isEmpty
             triggerInitialLoadIfPossible()
             pruneEntriesForRemovedFeeds()
@@ -369,7 +373,6 @@ struct FeedListView: View {
         .onChange(of: sortOption) { oldValue, newValue in
             withAnimation(.easeInOut(duration: 0.2)) {
                 sortAllEntriesGlobally()
-                bumpListAppearToken()
             }
         }
         .onChange(of: feeds) { oldValue, newValue in
@@ -377,21 +380,13 @@ struct FeedListView: View {
             if activeFeedTabID != FeedFilterSelection.all && !validIDs.contains(activeFeedTabID) {
                 activeFeedTabID = FeedFilterSelection.all
             }
+            selectedFeedIDs = selectedFeedIDs.intersection(validIDs)
+            if selectedFeedIDs.isEmpty {
+                selectedFeedIDs = validIDs
+            }
             pruneEntriesForRemovedFeeds()
             Task { @MainActor in
                 await loadRSSFeed()
-            }
-        }
-        .onChange(of: activeFeedTabID) { _, _ in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                // Trigger list diffing animation on filteredEntries changes
-                bumpListAppearToken()
-            }
-        }
-        .onChange(of: showUnreadOnly) { oldValue, newValue in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                // Trigger list diffing animation on filteredEntries changes
-                bumpListAppearToken()
             }
         }
         .onChange(of: bookmarkedLinks) { _, newValue in
@@ -401,11 +396,6 @@ struct FeedListView: View {
             }
             withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
                 showBookmarkFilterPill = hasBookmarks
-            }
-        }
-        .onChange(of: searchText) { oldValue, newValue in
-            withAnimation(.easeInOut(duration: 0.2)) {
-                bumpListAppearToken()
             }
         }
         .onChange(of: path) { oldValue, newValue in
@@ -492,17 +482,15 @@ struct FeedListView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             ToolbarSpacer(.flexible, placement: .bottomBar)
-            if showBookmarkFilterPill {
-                ToolbarSpacer(.fixed, placement: .bottomBar)
-                ToolbarItem(placement: .bottomBar) {
-                    bookmarkFilterPill(size: 36)
-                        .transition(
-                            .asymmetric(
-                                insertion: .offset(x: 8).combined(with: .opacity),
-                                removal: .opacity
-                            )
+            ToolbarSpacer(.fixed, placement: .bottomBar)
+            ToolbarItem(placement: .bottomBar) {
+                filterMenuButton(size: 36)
+                    .transition(
+                        .asymmetric(
+                            insertion: .offset(x: 8).combined(with: .opacity),
+                            removal: .opacity
                         )
-                }
+                    )
             }
         } else {
             ToolbarItem(placement: .bottomBar) {
@@ -571,68 +559,34 @@ struct FeedListView: View {
         
         // Gruppe 2: Filter + Menü
         ToolbarSpacer(.fixed,placement: .topBarTrailing)
-        ToolbarItem(placement: .topBarTrailing) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showUnreadOnly.toggle()
-                }
-            } label: {
-                ZStack {
-                    VStack(spacing: 2.5) {
-                        Capsule().frame(width: 14, height: 2)
-                        Capsule().frame(width: 10, height: 2)
-                        Capsule().frame(width: 6, height: 2)
-                    }
-                    .foregroundStyle(theme.uiAccentColor.opacity(0.28))
-                    
-                    VStack(spacing: 2.5) {
-                        Capsule().frame(width: 14, height: 2)
-                        Capsule().frame(width: 10, height: 2)
-                        Capsule().frame(width: 6, height: 2)
-                    }
-                    .foregroundStyle(theme.uiAccentColor)
-                    .mask(
-                        VStack(spacing: 0) {
-                            Spacer(minLength: 0)
-                            Rectangle()
-                                .frame(height: showUnreadOnly ? 12 : 0)
-                        }
-                    )
-                    .animation(.easeInOut(duration: 0.2), value: showUnreadOnly)
-                }
-                .frame(width: 23, height: 18)
-            }
-            .accessibilityLabel(showUnreadOnly ? "Nur ungelesene" : "Alle Artikel")
-            .tint(theme.uiAccentColor)
-        }
         ToolbarItem(placement: .topBarTrailing){
             Menu {
-                Text("Sortieren nach:")
-                Button {
-                    guard sortOption != "Neueste zuerst" else { return }
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        sortOption = "Neueste zuerst"
+                Section ("Sortierung"){
+                    Button {
+                        guard sortOption != "Neueste zuerst" else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            sortOption = "Neueste zuerst"
+                        }
+                    } label: {
+                        Label("Neueste zuerst", systemImage: "arrow.down")
+                            .labelStyle(.titleAndIcon)
                     }
-                } label: {
-                    Label("Neueste zuerst", systemImage: "arrow.down")
-                        .labelStyle(.titleAndIcon)
-                }
-                
-                Button {
-                    guard sortOption != "Älteste zuerst" else { return }
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        sortOption = "Älteste zuerst"
+                    
+                    Button {
+                        guard sortOption != "Älteste zuerst" else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            sortOption = "Älteste zuerst"
+                        }
+                    } label: {
+                        Label("Älteste zuerst", systemImage: "arrow.up")
+                            .labelStyle(.titleAndIcon)
                     }
-                } label: {
-                    Label("Älteste zuerst", systemImage: "arrow.up")
-                        .labelStyle(.titleAndIcon)
                 }
-                
-            } label: {
-                Image(systemName: sortIconName)
-            }
-            .tint(theme.uiAccentColor)
-        } // <- Ende ToolbarItemGroup topBarTrailing
+                } label: {
+                    Image(systemName: sortIconName)
+                }
+                .tint(theme.uiAccentColor)
+            } // <- Ende ToolbarItemGroup topBarTrailing
     } // <- Ende feedToolbar
     
     private var unreadCount: Int {
@@ -688,6 +642,19 @@ struct FeedListView: View {
                         path.append(newDetail)
                     }
                 }
+            },
+            onToggleRead: { isRead in
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if let idx = entries.firstIndex(where: { $0.link == entry.link }) {
+                        entries[idx].isRead = isRead
+                    }
+                    if isRead {
+                        recentlyReadLinks.insert(entry.link)
+                    } else {
+                        recentlyReadLinks.remove(entry.link)
+                    }
+                }
+                persistEntriesCache()
             }
         )
     }
@@ -767,7 +734,7 @@ struct FeedListView: View {
                 removal: .modifier(
                     active: ArticleRowPopTransitionModifier(
                         scale: 0.975,
-                        yOffset: 6,
+                        yOffset: -6,
                         blur: 4,
                         opacity: 0.0,
                         glowColor: rowFeedColor,
@@ -1123,9 +1090,11 @@ extension FeedListView {
     }
     
     private func filteredEntries(for selectedFeedID: String) -> [FeedEntry] {
+        let activeFeedIDs = selectedFeedIDs.isEmpty ? Set(feeds.map { $0.id }) : selectedFeedIDs
         let feedFilteredEntries = entries.filter { entry in
-            guard selectedFeedID != FeedFilterSelection.all else { return true }
             guard let id = feedSource(for: entry)?.id else { return false }
+            guard activeFeedIDs.contains(id) else { return false }
+            guard selectedFeedID != FeedFilterSelection.all else { return true }
             return id == selectedFeedID
         }
         let bookmarkFilteredEntries = showOnlyBookmarks
@@ -1315,39 +1284,114 @@ extension FeedListView {
         }
     }
 
-    private func bookmarkFilterPill(size: CGFloat) -> some View {
-        let isActive = showOnlyBookmarks
-        let iconSize = max(14, size * 0.4)
-        return Button {
-            triggerLightHaptic()
-            withAnimation(.easeInOut(duration: 0.2)) {
-                showOnlyBookmarks.toggle()
+    private func filterMenuButton(size: CGFloat) -> some View {
+        let iconSize = max(14, size * 0.45)
+        return Menu {
+            ControlGroup {
+                Button {
+                    triggerLightHaptic()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if showOnlyBookmarks {
+                            setQuickFilterMode(bookmarks: false, unreadOnly: false, dummyTwo: false)
+                        } else {
+                            setQuickFilterMode(bookmarks: true, unreadOnly: false, dummyTwo: false)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: showOnlyBookmarks ? "bookmark.fill" : "bookmark")
+                            .foregroundStyle(showOnlyBookmarks ? Color.primary : Color.secondary)
+                        Text("Lesezeichen")
+                    }
+                }
+
+                Button {
+                    triggerLightHaptic()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if showUnreadOnly {
+                            setQuickFilterMode(bookmarks: false, unreadOnly: false, dummyTwo: false)
+                        } else {
+                            setQuickFilterMode(bookmarks: false, unreadOnly: true, dummyTwo: false)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: showUnreadOnly ? "eye.fill" : "eye")
+                            .foregroundStyle(showUnreadOnly ? Color.primary : Color.secondary)
+                        Text("Ungelesen")
+                    }
+                }
+
+                Button {
+                    triggerLightHaptic()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if showDummyFilterTwo {
+                            setQuickFilterMode(bookmarks: false, unreadOnly: false, dummyTwo: false)
+                        } else {
+                            setQuickFilterMode(bookmarks: false, unreadOnly: false, dummyTwo: true)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: showDummyFilterTwo ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(showDummyFilterTwo ? Color.primary : Color.secondary)
+                        Text("Dummy 2")
+                    }
+                }
+            }
+
+            Divider()
+
+            Section("Feeds"){
+                ForEach(feeds) { feed in
+                    let isSelected = selectedFeedIDs.contains(feed.id)
+                    Button {
+                        triggerLightHaptic()
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            if selectedFeedIDs.contains(feed.id) {
+                                selectedFeedIDs.remove(feed.id)
+                            } else {
+                                selectedFeedIDs.insert(feed.id)
+                            }
+                            if selectedFeedIDs.isEmpty {
+                                selectedFeedIDs = Set(feeds.map { $0.id })
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(feedDisplayTitle(for: feed))
+                            Spacer()
+                            if isSelected {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
             }
         } label: {
-            ZStack {
-                Image(systemName: "bookmark")
-                    .font(.system(size: iconSize, weight: .semibold))
-                    .foregroundStyle(theme.uiAccentColor.opacity(isActive ? 0.7 : 0.6))
-                Image(systemName: "bookmark.fill")
-                    .font(.system(size: iconSize, weight: .semibold))
-                    .foregroundStyle(theme.uiAccentColor)
-                    .mask(
-                        VStack(spacing: 0) {
-                            Rectangle()
-                                .frame(height: isActive ? size : 0)
-                            Spacer(minLength: 0)
-                        }
-                        .frame(width: size, height: size)
-                    )
-                    .animation(.easeInOut(duration: 0.22), value: isActive)
-            }
-            .frame(width: size, height: size)
+            Image(systemName: activeFilterIconName)
+                .font(.system(size: iconSize, weight: .semibold))
+                .frame(width: size, height: size)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isActive ? "Nur Lesezeichen" : "Alle Artikel")
+        .tint(theme.uiAccentColor)
+        .accessibilityLabel("Filtermenü")
     }
 
-    private func readFilterPill(size: CGFloat) -> some View {
+    private var activeFilterIconName: String {
+        if showOnlyBookmarks { return "bookmark.fill" }
+        if showUnreadOnly { return "eye.fill" }
+        if showDummyFilterTwo { return "2.circle.fill" }
+        return "line.3.horizontal.decrease"
+    }
+
+    private func setQuickFilterMode(bookmarks: Bool, unreadOnly: Bool, dummyTwo: Bool) {
+        showOnlyBookmarks = bookmarks
+        showUnreadOnly = unreadOnly
+        showDummyFilterTwo = dummyTwo
+    }
+
+    /*private func readFilterPill(size: CGFloat) -> some View {
         return Button {
             triggerLightHaptic()
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -1374,7 +1418,7 @@ extension FeedListView {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(showUnreadOnly ? "Nur ungelesene" : "Alle Artikel")
-    }
+    }*/
     
     private func updateFeed(original: FeedSource, updated: FeedSource) {
         guard let idx = feeds.firstIndex(where: { $0.url == original.url }) else { return }
@@ -1427,6 +1471,7 @@ extension FeedListView {
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
             withAnimation(.easeInOut(duration: 0.18)) {
                 entries[index].isRead = true
+                recentlyReadLinks.insert(entry.link)
             }
             store.setRead(true, articleID: entry.link)
             persistEntriesCache()

@@ -1,6 +1,7 @@
 import Foundation
 import BackgroundTasks
 import SwiftUI
+import OSLog
 
 final class BackgroundRefreshManager {
     static let shared = BackgroundRefreshManager()
@@ -24,9 +25,7 @@ final class BackgroundRefreshManager {
         do {
             try BGTaskScheduler.shared.submit(request)
         } catch {
-            #if DEBUG
-            print("BGTask submit failed: \(error)")
-            #endif
+            AppLogger.app.error("BGTask submit failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

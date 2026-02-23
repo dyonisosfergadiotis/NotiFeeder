@@ -1,47 +1,97 @@
 # NotiFeeder
 
-NotiFeeder is a native iOS/iPadOS app for managing arbitrary RSS feeds. It aggregates fresh articles, displays them in a compact card layout, supports bookmarking, full-text search, read-state tracking, and fires per-article local notifications. Built entirely with SwiftUI + SwiftData, it focuses on a smooth reading workflow without external dependencies.
+NotiFeeder ist ein natives RSS-Reader-Projekt für iOS mit Widget und Apple-Watch-Begleitapp.  
+Die App ist vollständig in Swift/SwiftUI gebaut und fokussiert auf schnelles Lesen, lokale Speicherung und saubere Synchronisierung zwischen iPhone, Widget und Watch.
 
 ## Features
 
-- **Mehrere Feeds**: Nutzer:innen können beliebig viele RSS/Atom-Feeds hinterlegen, bearbeiten und entfernen.
-- **Artikelverwaltung**: Neue Meldungen werden gruppiert dargestellt, lassen sich sortieren (neueste / älteste / alphabetisch) und als gelesen/ungelesen markieren.
-- **Bookmarks & SwiftData**: Lieblingsartikel werden lokal via SwiftData gesichert und stehen in einem eigenen Tab bereit – inklusive Offline-Zugriff.
-- **Suche**: Eine durchsuchbare Übersicht aller geladenen Artikel, inklusive Hervorhebung der Suchbegriffe in Titel und Zusammenfassung.
-- **Hintergrundaktualisierung**: Über `BGAppRefreshTask` werden Feeds regelmäßig aktualisiert; neue Artikel werden auch im Hintergrund erkannt.
-- **Theming**: Jeder Feed kann eine eigene Farbe erhalten; das globale Farbschema richtet sich nach `ThemeSettings`.
+- Mehrere RSS/Atom-Feeds anlegen, bearbeiten, löschen
+- Artikel-Feed mit Suche, Sortierung und Schnellfiltern (z. B. ungelesen, Lesezeichen)
+- Persistenter Lesestatus pro Artikel
+- Lesezeichen via SwiftData (`FeedEntryModel`)
+- Homescreen-Widget (Small/Medium/Large) mit optional transparentem Hintergrund
+- Deep Links auf Artikel (`notifeeder://article?...`) aus dem Widget in die App
+- Apple-Watch-Sync über `WatchConnectivity` (Snapshot der Feeds + Öffnen auf dem iPhone)
+- Onboarding-Flow zum initialen Feed-Setup
 
-## Requirements
+## Tech Stack
 
-- Xcode 15.3 or newer (Swift 5.9, iOS 17 SDK – `IPHONEOS_DEPLOYMENT_TARGET = 17.0`).
-- An iOS/iPadOS 17 device or simulator.
+- Swift 5
+- SwiftUI
+- SwiftData
+- WidgetKit + AppIntents
+- WatchConnectivity
+- UserDefaults (inkl. App Group `group.notiFeeder`)
 
-## Build & Run
+## Targets / Schemes
 
-1. Clone the repo and `cd` into it.
-2. Open in Xcode via `open NotiFeeder.xcodeproj` or build via CLI:
+Verfügbare Schemes (laut `xcodebuild -list`):
+
+- `NotiFeeder` (iOS App)
+- `NotiFeeder WidgetExtension` (Widget)
+- `NotiFeeder AW` (Watch App)
+- `NotiFeeder AW (Notification)` (Watch Notification Scheme)
+
+## Voraussetzungen
+
+- Aktuelles Xcode mit iOS- und watchOS-SDK passend zu den Deployment Targets
+- Deployment Targets im Projekt:
+  - iOS App: `IPHONEOS_DEPLOYMENT_TARGET = 26.0`
+  - Widget: `IPHONEOS_DEPLOYMENT_TARGET = 26.2`
+  - Watch: `WATCHOS_DEPLOYMENT_TARGET = 26.0`
+
+## Setup (lokal)
+
+1. Repository klonen:
 
    ```bash
-   xcodebuild -scheme NotiFeeder -project NotiFeeder.xcodeproj
+   git clone <repo-url>
+   cd NotiFeeder
    ```
 
-3. Select your target device/simulator and hit Run (`⌘R`). On first launch add or edit feeds in **Settings → Feeds**.
+2. Projekt öffnen:
 
-### Background refresh
+   ```bash
+   open NotiFeeder.xcodeproj
+   ```
 
-- Uses `BGAppRefreshTask` with identifier `de.dyonisos.NotiFeeder.refresh`.
-- iOS decides the actual schedule; the app re-requests roughly every 30 minutes via `scheduleNextFetch()`.
+3. In Xcode für alle Targets Signing konfigurieren (Team, Bundle IDs).
+4. Falls Bundle IDs geändert werden: App Group `group.notiFeeder` in Capabilities/Entitlements konsistent anpassen.
+5. `NotiFeeder` Scheme auswählen und auf Simulator oder Gerät starten.
 
-## Data storage
+## Build per CLI
 
-- **Feeds & articles** live in `UserDefaults` (`savedFeeds`, `savedArticles`).
-- **Bookmarks** use SwiftData’s `FeedEntryModel` in the default local container.
-- **Read state** persists as a JSON list (`readArticleIDs`) in `UserDefaults`.
+```bash
+# iOS App
+xcodebuild -project NotiFeeder.xcodeproj -scheme "NotiFeeder" build
 
-## Contribution & Support
+# Widget
+xcodebuild -project NotiFeeder.xcodeproj -scheme "NotiFeeder WidgetExtension" build
 
-Pull requests welcome. Please follow typical SwiftLint-style conventions (no force unwraps without checks, well-structured SwiftUI layouts). Open an issue if you hit a bug or have ideas.
+# Watch
+xcodebuild -project NotiFeeder.xcodeproj -scheme "NotiFeeder AW" build
+```
 
-## License
+## Projektstruktur
 
-No explicit license yet. Contact the author (Dyonisos Fergadiotis) if you want to reuse code.
+- `NotiFeeder/` - iOS Haupt-App
+- `NotiFeeder Widget/` - Widget Extension
+- `NotiFeeder AW/` - watchOS App
+- `Shared/` - gemeinsame Bausteine zwischen Targets
+
+## Datenhaltung
+
+- Feeds + gecachte Artikel: `UserDefaults` (Keys: `savedFeeds`, `cachedEntries`, via `FeedStorage`)
+- Lesestatus + Artikelindex: `UserDefaults` (Keys: `readArticleIDs`, `savedArticles`, via `ArticleStore`)
+- Lesezeichen: SwiftData (`FeedEntryModel`)
+- Widget-Einstellungen (Transparenz, Offset, etc.): App-Group-Defaults (`group.notiFeeder`)
+
+## Bekannte Grenzen
+
+- `BackgroundRefreshManager` ist aktuell als Gerüst vorhanden, aber nicht in den App-Startfluss integriert.
+- `RefreshFeedsIntent` ist derzeit ein Platzhalter (liefert Status-Text, triggert keinen vollständigen Feed-Refresh).
+- Es gibt aktuell keine automatisierten Unit/UI-Tests im Repository.
+
+## Lizenz
+
+Aktuell ist keine Lizenzdatei hinterlegt. Bei externer Weiterverwendung bitte vorher klären.

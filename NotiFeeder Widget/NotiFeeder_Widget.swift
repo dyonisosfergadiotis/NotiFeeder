@@ -366,11 +366,9 @@ private struct WidgetCore {
 
     static func feedColor(for title: String?) -> Color? {
         guard let title = title, !title.isEmpty else { return nil }
-        let hash = abs(title.hashValue)
-        let hue = Double((hash % 256)) / 255.0
-        let saturation = 0.6
-        let brightness = 0.8
-        return Color(hue: hue, saturation: saturation, brightness: brightness)
+        let options = FeedColorOption.defaultPalette
+        let index = abs(title.hashValue) % options.count
+        return options[index].color
     }
 
     #if canImport(UIKit)
@@ -586,7 +584,7 @@ private struct WidgetCropper {
 
         // Horizontal gutters and outer margins (left/right) in points
         let gutterXPt: CGFloat
-        if let smallSize {
+        if smallSize != nil {
             // 3 gutters horizontally: left outer, middle, right outer
             gutterXPt = max(0, (screenWidth - (2 * smallWidthPt)) / 3)
         } else if let mediumSize {
@@ -913,14 +911,23 @@ struct LargeWidgetProvider: AppIntentTimelineProvider {
     }
 }
 
-// Removed original WidgetProvider and replaced with above 3 providers and WidgetCore.
-
 // MARK: - View
 
 struct NotiFeeder_WidgetEntryView: View {
     var entry: WidgetEntry
     @Environment(\.widgetFamily) var family
     @Environment(\.colorScheme) private var colorScheme
+
+    private func articleDeepLink(for link: String) -> URL? {
+        guard !link.isEmpty else { return nil }
+        var components = URLComponents()
+        components.scheme = "notifeeder"
+        components.host = "article"
+        components.queryItems = [
+            URLQueryItem(name: "link", value: link)
+        ]
+        return components.url
+    }
 
     // Returns nil for today, "gestern" for yesterday, else dd.MM
     private func displayDateLabel(_ date: Date) -> String? {
@@ -967,7 +974,7 @@ struct NotiFeeder_WidgetEntryView: View {
                         .font(.caption2)
                         .opacity(0)
                 } else {
-                    if let url = URL(string: item.link), !item.link.isEmpty {
+                    if let url = articleDeepLink(for: item.link) {
                         Link(destination: url) { smallCardContent(item) }
                             .buttonStyle(.plain)
                     } else {
@@ -1055,7 +1062,7 @@ struct NotiFeeder_WidgetEntryView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 // Wrap row in Link if possible
-                if let url = URL(string: item.link), !item.link.isEmpty {
+                if let url = articleDeepLink(for: item.link) {
                     Link(destination: url) { row }
                         .buttonStyle(.plain)
                 } else {
@@ -1231,8 +1238,8 @@ private extension DateFormatter {
     }()
 }
 
-private extension Color {
-    static func fromHex(_ hex: String) -> Color {
+public extension Color {
+     static func fromHex(_ hex: String) -> Color {
         let sanitized = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         var int: UInt64 = 0
         Scanner(string: sanitized).scanHexInt64(&int)

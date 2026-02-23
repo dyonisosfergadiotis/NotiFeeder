@@ -6,7 +6,6 @@ struct SettingsView: View {
     @EnvironmentObject private var theme: ThemeSettings
     @State private var showingAddFeed = false
     @State private var feedBeingEdited: FeedSource? = nil
-    @State private var showingAccentPicker = false
     
     var body: some View {
         NavigationStack {
@@ -42,8 +41,8 @@ struct SettingsView: View {
                     } label: {
                         HStack(spacing: 14) {
                             ZStack {
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(theme.uiAccentColor.opacity(0.18))
+                                RoundedRectangle(cornerRadius: UIStylePolicy.Radius.small, style: .continuous)
+                                    .fill(theme.uiAccentColor.opacity(UIStylePolicy.chipTintOpacityRead + 0.06))
                                     .frame(width: 36, height: 36)
                                 Image(systemName: "square.grid.2x2")
                                     .foregroundStyle(theme.uiAccentColor)
@@ -59,31 +58,6 @@ struct SettingsView: View {
                         .padding(.vertical, 6)
                     }
 
-                    Button {
-                        showingAccentPicker = true
-                    } label: {
-                        HStack(spacing: 14) {
-                            Circle()
-                                .fill(theme.uiAccentColor)
-                                .frame(width: 33, height: 33)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Akzentfarbe")
-                                    .appTitle()
-                                Text("Wähle eine Pastellfarbe")
-                                    .appSecondary()
-                            }
-                            Spacer()
-                        }
-                        .padding(.vertical, 6)
-                    }
-                    .tint(theme.uiAccentColor)
-                    .sheet(isPresented: $showingAccentPicker) {
-                        AccentColorPickerSheet(selected: theme.uiAccentColor) { newColor in
-                            theme.setUIAccentColor(newColor)
-                        }
-                        .presentationDetents([.fraction(0.47)])
-                        .presentationDragIndicator(.visible)
-                    }
                 }
                 
                 InfoSection(appVersionString: appVersionString)
@@ -108,9 +82,6 @@ struct SettingsView: View {
             }
             .environmentObject(theme)
         }
-        .onAppear {
-            // Removed calls to refreshNotificationSettings() and loadNotificationPreferences()
-        }
     }
     
     private var appVersionString: String {
@@ -126,13 +97,6 @@ struct SettingsView: View {
         }
         theme.setColor(colorOption, for: updated.url)
         saveFeeds()
-        // Removed pruneNotificationPreferences() and saveNotificationPreferences() calls
-    }
-    
-    func deleteFeeds(at offsets: IndexSet) {
-        // Remove feeds at specified offsets
-        feeds.remove(atOffsets: offsets)
-        saveFeeds()
     }
     
     func saveFeeds() {
@@ -142,70 +106,6 @@ struct SettingsView: View {
     }
     
     @AppStorage("settingsBannerDismissed") private var bannerDismissed = false
-}
-
-private struct AccentColorPickerSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var theme: ThemeSettings
-    let selected: Color
-    let onPick: (Color) -> Void
-
-    private let accentPalette = FeedColorOption.palette
-
-    private let columns: [GridItem] = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
-
-    var body: some View {
-        NavigationStack {
-            VStack {
-                LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: 18), count: 4),
-                    spacing: 22
-                ) {
-                    ForEach(accentPalette) { option in
-                        let color = option.color
-                        Button {
-                            onPick(color)
-                        } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(color)
-                                    .frame(width: 58, height: 58)
-                                if colorsEqual(color, selected) || colorsEqual(color, theme.uiAccentColor) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 18, weight: .semibold))
-                                        .foregroundStyle(.white.opacity(0.95))
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(option.name)
-                    }
-                }
-                .padding(.top, 7.5)
-                .padding(.bottom, 10)
-                .padding(.horizontal, 8)
-                Spacer()
-            }
-            .navigationTitle("Akzentfarbe")
-            .navigationBarTitleDisplayMode(.inline)
-        }
-        .tint(theme.uiAccentColor)
-    }
-
-    private func colorsEqual(_ a: Color, _ b: Color) -> Bool {
-        // Best-effort comparison by converting to UIColor and comparing RGBA
-        #if canImport(UIKit)
-        let ua = UIColor(a)
-        let ub = UIColor(b)
-        var ra: CGFloat = 0, ga: CGFloat = 0, ba: CGFloat = 0, aa: CGFloat = 0
-        var rb: CGFloat = 0, gb: CGFloat = 0, bb: CGFloat = 0, ab: CGFloat = 0
-        ua.getRed(&ra, green: &ga, blue: &ba, alpha: &aa)
-        ub.getRed(&rb, green: &gb, blue: &bb, alpha: &ab)
-        return abs(ra - rb) < 0.01 && abs(ga - gb) < 0.01 && abs(ba - bb) < 0.01 && abs(aa - ab) < 0.01
-        #else
-        return false
-        #endif
-    }
 }
 
 private struct FeedsSection: View {
@@ -267,7 +167,7 @@ private struct FaviconImageView: View {
             if let image = image {
                 image.resizable().scaledToFit()
             } else {
-                Circle().fill(Color.gray.opacity(0.3))
+                Circle().fill(Color.gray.opacity(UIStylePolicy.cardBorderOpacityRead + 0.18))
                     .onAppear {
                         loadFavicon()
                     }
@@ -278,62 +178,16 @@ private struct FaviconImageView: View {
     private func loadFavicon() {
         guard !isLoading else { return }
         isLoading = true
-
-        let fileManager = FileManager.default
-        if let cachedURL = FaviconCacheHelper.cachedURL(for: url),
-           let attributes = try? fileManager.attributesOfItem(atPath: cachedURL.path),
-           let modificationDate = attributes[.modificationDate] as? Date {
-            // Optional: update icon if older than 24h
-            if Date().timeIntervalSince(modificationDate) < 24*60*60,
-               let uiImage = UIImage(contentsOfFile: cachedURL.path) {
-                image = Image(uiImage: uiImage)
-                return
-            }
+        if let uiImage = FaviconCache.cachedImage(for: url) {
+            image = Image(uiImage: uiImage)
+            return
         }
 
         Task {
-            if let uiImage = await FaviconCacheHelper.downloadAndCacheFavicon(from: url) {
+            if let uiImage = await FaviconCache.downloadAndCacheFavicon(from: url) {
                 await MainActor.run { image = Image(uiImage: uiImage) }
             }
         }
-    }
-}
-
-private enum FaviconCacheHelper {
-    static func cachedURL(for url: URL) -> URL? {
-        let fileURL = cacheURL(for: url)
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            return fileURL
-        }
-        return nil
-    }
-
-    static func cacheURL(for url: URL) -> URL {
-        let fileName = cacheFileName(for: url)
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        return caches.appendingPathComponent(fileName)
-    }
-
-    static func cacheFileName(for url: URL) -> String {
-        // Use a hash of the url as filename for uniqueness
-        let base = url.absoluteString
-        let hash = String(base.hashValue)
-        let ext = (url.pathExtension.isEmpty ? "png" : url.pathExtension)
-        return "favicon_\(hash).\(ext)"
-    }
-
-    static func downloadAndCacheFavicon(from url: URL) async -> UIImage? {
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            if let image = UIImage(data: data) {
-                let fileURL = cacheURL(for: url)
-                try? data.write(to: fileURL)
-                return image
-            }
-        } catch {
-            // Ignore error, fallback to placeholder
-        }
-        return nil
     }
 }
 
@@ -368,55 +222,24 @@ private struct EditFeedView: View {
 
     var body: some View {
         NavigationView {
-            Form {
-                Section("Details") {
-                    TextField("Titel", text: $title)
-                    TextField("RSS-URL", text: $url)
-                        .keyboardType(.URL)
-                        .autocapitalization(.none)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                }
-                Section("Farbe") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 16) {
-                            ForEach(FeedColorOption.palette) { option in
-                                Button {
-                                    selectedColor = option
-                                } label: {
-                                    Circle()
-                                        .fill(option.color)
-                                        .frame(width: 44, height: 44)
-                                        .overlay {
-                                            if option == selectedColor {
-                                                Circle()
-                                                    .stroke(theme.uiAccentColor, lineWidth: 4)
-                                            }
-                                        }
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel(option.name)
-                            }
-                        }
-                        .padding(.vertical, 10)
-                        .padding(.leading, 8)
-                        .padding(.trailing, 8)
-                    }
-                }
-            }
+            FeedEditorForm(
+                title: $title,
+                url: $url,
+                selectedColor: $selectedColor,
+                includeDetailsSection: true
+            )
             .navigationTitle("Feed bearbeiten")
+            .sheetCornerAlignedScrollContent()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") {
-                        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !trimmedTitle.isEmpty, !trimmedURL.isEmpty else { return }
-                        let updated = FeedSource(title: trimmedTitle, url: trimmedURL)
+                        let draft = FeedDraft(title: title, url: url)
+                        guard draft.hasTitleAndURL else { return }
+                        let updated = FeedSource(title: draft.trimmedTitle, url: draft.trimmedURL)
                         onSave(updated, selectedColor)
                         dismiss()
                     }
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                              url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!FeedDraft(title: title, url: url).hasTitleAndURL)
                     .tint(theme.uiAccentColor)
                 }
                 ToolbarItem(placement: .cancellationAction) {
@@ -424,8 +247,9 @@ private struct EditFeedView: View {
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .font(.title3.weight(.semibold))
                     }
+                    .minimumHitTarget()
                     .tint(theme.uiAccentColor)
                     .accessibilityLabel("Schließen")
                 }
@@ -450,25 +274,24 @@ private struct SettingsSummaryCard: View {
                 Label {
                     Text("Personalisiere deinen Feed")
                         .appTitle()
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.headline.weight(.semibold))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 } icon: {
                     Image(systemName: "sparkles")
                         .symbolVariant(.fill)
-                        .font(.system(size: 20, weight: .medium))
+                        .font(.title3.weight(.medium))
                 }
                 .foregroundStyle(Color(.systemBackground))
-            //}
                 Spacer()
-          // HStack {
                 Button {
                     onClose()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(Color(.systemBackground).opacity(0.85))
+                        .foregroundStyle(Color(.systemBackground).opacity(UIStylePolicy.summaryTextOpacity + 0.10))
                 }
+                .minimumHitTarget()
                 .buttonStyle(.plain)
                 .accessibilityLabel("Banner schließen")
             }
@@ -484,14 +307,14 @@ private struct SettingsSummaryCard: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .background(Color(.systemBackground).opacity(0.18), in: Capsule())
+            .background(Color(.systemBackground).opacity(UIStylePolicy.chipTintOpacityRead + 0.06), in: Capsule())
             .foregroundStyle(Color(.systemBackground))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(22)
         .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(LinearGradient(colors: [accentColor.opacity(0.92), accentColor.opacity(0.7)],
+            RoundedRectangle(cornerRadius: UIStylePolicy.Radius.xLarge, style: .continuous)
+                .fill(LinearGradient(colors: [accentColor.opacity(0.92), accentColor.opacity(UIStylePolicy.summaryTextOpacity - 0.05)],
                                      startPoint: .topLeading,
                                      endPoint: .bottomTrailing))
         )
@@ -500,19 +323,6 @@ private struct SettingsSummaryCard: View {
 
 extension FeedColorOption {
     static var palette: [FeedColorOption] { FeedColorOption.defaultPalette }
-
-    func nextInPalette() -> FeedColorOption {
-        let all = Self.palette
-        guard let idx = all.firstIndex(of: self) else { return self }
-        let nextIdx = all.index(after: idx)
-        return nextIdx < all.endIndex ? all[nextIdx] : all.first ?? self
-    }
-
-    func previousInPalette() -> FeedColorOption {
-        let all = Self.palette
-        guard let idx = all.firstIndex(of: self) else { return self }
-        return idx > all.startIndex ? all[all.index(before: idx)] : (all.last ?? self)
-    }
 }
 
 #Preview {

@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 // MARK: - DateFormatter Extension (Formatter Definitions)
 
@@ -129,7 +130,7 @@ struct DateParser {
         }
 
         // 4) Fallback
-        print("🔴 WARNUNG: Datumsparsen fehlgeschlagen für: \(s)")
+        AppLogger.parsing.warning("Date parsing failed for input: \(s, privacy: .public)")
         return Date.distantPast
     }
 }

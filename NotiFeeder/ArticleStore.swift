@@ -18,12 +18,6 @@ public struct StoredFeedArticle: Codable, Hashable, Identifiable {
     public let feedTitle: String?
 }
 
-public struct StoredFeedSource: Codable, Hashable, Identifiable {
-    public var id: String { url }
-    public let title: String
-    public let url: String
-}
-
 // MARK: - ArticleStore
 final class ArticleStore: ObservableObject {
     static let shared = ArticleStore()

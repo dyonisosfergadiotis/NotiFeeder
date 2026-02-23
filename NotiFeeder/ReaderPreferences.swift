@@ -3,9 +3,7 @@ import SwiftUI
 enum ReaderFontFamily: String, CaseIterable, Identifiable {
     case modern
     case serif
-    case editorial
     case rounded
-    case relaxed
     case mono
 
     var id: String { rawValue }
@@ -14,9 +12,7 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
         switch self {
         case .modern: return "Modern"
         case .serif: return "Serif"
-        case .editorial: return "Editorial"
         case .rounded: return "Rund"
-        case .relaxed: return "Entspannt"
         case .mono: return "Mono"
         
         }
@@ -28,12 +24,8 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
             return "'Avenir Next', 'Segoe UI', 'Helvetica Neue', sans-serif"
         case .serif:
             return "'Times New Roman', Georgia, serif"
-        case .editorial:
-            return "'Palatino Linotype', 'Book Antiqua', serif"
         case .rounded:
             return "'SF Pro Rounded', 'SF Pro', -apple-system, sans-serif"
-        case .relaxed:
-            return "'Lora', 'Merriweather', 'Georgia', serif"
         case .mono:
             return "'SFMono-Regular', Menlo, monospace"
         }
@@ -41,7 +33,7 @@ enum ReaderFontFamily: String, CaseIterable, Identifiable {
 
     var fontDesign: Font.Design {
         switch self {
-        case .serif, .editorial, .relaxed: return .serif
+        case .serif: return .serif
         case .rounded: return .rounded
         case .mono: return .monospaced
         case .modern: return .rounded
@@ -63,9 +55,9 @@ struct ReaderSettingsPanel: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(header: Text("Schriftgröße")) {
+                Section("Schriftgröße") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Slider(value: $fontScale, in: 0.85...1.5, step: 0.05) {
+                        Slider(value: $fontScale, in: 0.75...1.5, step: 0.05) {
                             Text("Schriftgröße")
                         }
                         .tint(feedColor)
@@ -75,9 +67,9 @@ struct ReaderSettingsPanel: View {
                     }
                 }
                 
-                Section(header: Text("Zeilenabstand")) {
+                Section("Zeilenabstand") {
                     VStack(alignment: .leading, spacing: 10) {
-                        Slider(value: $lineSpacing, in: 1.2...2.0, step: 0.05) {
+                        Slider(value: $lineSpacing, in: 0.75...1.5, step: 0.05) {
                             Text("Zeilenabstand")
                         }
                         .tint(feedColor)
@@ -87,7 +79,7 @@ struct ReaderSettingsPanel: View {
                     }
                 }
 
-                Section(header: Text("Ausrichtung")) {
+                Section("Ausrichtung") {
                     VStack(alignment: .leading, spacing: 10) {
                         Picker("Ausrichtung", selection: $textAlignment) {
                             Text("Links").tag("left")
@@ -101,7 +93,7 @@ struct ReaderSettingsPanel: View {
                     }
                 }
 
-                Section(header: Text("Schriftart")) {
+                Section("Schriftart") {
                     LazyVGrid(columns: fontGridColumns, spacing: 10) {
                         ForEach(ReaderFontFamily.allCases) { option in
                             Button {
@@ -131,8 +123,9 @@ struct ReaderSettingsPanel: View {
 
                 
             }
-            .navigationTitle("Lesemodus")
+            .navigationTitle("Reader Einstellungen")
             .navigationBarTitleDisplayMode(.inline)
+            .sheetCornerAlignedScrollContent()
         }
         .presentationDetents([.medium])
         .presentationDragIndicator(.visible)

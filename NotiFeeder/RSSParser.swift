@@ -1,4 +1,12 @@
 import Foundation
+import OSLog
+
+enum RSSParserError: Error, Equatable {
+    case invalidEncoding
+    case invalidSanitizedData
+    case xmlParsingFailed
+    case emptyItems
+}
 
 class RSSParser: NSObject, XMLParserDelegate {
     private var entries: [FeedEntry] = []
@@ -23,23 +31,29 @@ class RSSParser: NSObject, XMLParserDelegate {
         return result
     }
 
-    func parse(data: Data) -> [FeedEntry] {
+    func parseResult(data: Data) -> Result<[FeedEntry], RSSParserError> {
         entries.removeAll()
         
         // 🧹 RSS-Inhalt minimal bereinigen (XMLParser akzeptiert z. B. kein &nbsp;)
-        guard var xmlString = String(data: data, encoding: .utf8) else { return [] }
+        guard var xmlString = String(data: data, encoding: .utf8) else { return .failure(.invalidEncoding) }
         xmlString = xmlString.replacingOccurrences(of: "&nbsp;", with: " ")
         xmlString = xmlString.replacingOccurrences(of: "<br>", with: "<br/>")
 
-        guard let cleanData = xmlString.data(using: .utf8) else { return [] }
+        guard let cleanData = xmlString.data(using: .utf8) else { return .failure(.invalidSanitizedData) }
         let parser = XMLParser(data: cleanData)
         parser.delegate = self
 
         if !parser.parse() {
-            print("❌ Parser error: \(parser.parserError?.localizedDescription ?? "unknown error")")
+            let message = parser.parserError?.localizedDescription ?? "unknown error"
+            AppLogger.parsing.error("XML parser failed: \(message, privacy: .public)")
+            return .failure(.xmlParsingFailed)
         }
 
-        return entries
+        guard !entries.isEmpty else {
+            return .failure(.emptyItems)
+        }
+
+        return .success(entries)
     }
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String : String] = [:]) {

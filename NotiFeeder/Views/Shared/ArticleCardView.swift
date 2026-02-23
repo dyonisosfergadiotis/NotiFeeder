@@ -2,6 +2,8 @@ import SwiftUI
 import Foundation
 
 struct ArticleCardView: View {
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
     let feedTitle: String
     let feedColor: Color
     let title: String
@@ -66,7 +68,7 @@ struct ArticleCardView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(pillBackground, in: Capsule())
-                            .foregroundStyle(Color.white.opacity(0.95))
+                            .foregroundStyle(isRead ? Color.secondary : Color.primary)
 
                         Spacer()
 
@@ -74,7 +76,7 @@ struct ArticleCardView: View {
                             if isBookmarked {
                                 Image(systemName: "bookmark.fill")
                                     .font(.caption)
-                                    .foregroundColor(feedColor)
+                                    .foregroundStyle(UIStylePolicy.neutralIcon)
                             }
                             if let formattedDate {
                                 Text(formattedDate)
@@ -102,11 +104,11 @@ struct ArticleCardView: View {
             .background(
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .fill(cardBackground )
-                    .strokeBorder(isRead ? cardBackground.opacity(0.1) : feedColor).clipped()
+                    .strokeBorder(feedColor.opacity(isRead ? UIStylePolicy.cardBorderOpacityRead : UIStylePolicy.cardBorderOpacityUnread)).clipped()
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(isRead ? Color.clear : Color.primary.opacity(0.06), lineWidth: 1)
+                    .strokeBorder(isRead ? Color.clear : Color.primary.opacity(UIStylePolicy.cardInnerStrokeOpacityUnread), lineWidth: 1)
             }
         }
     }
@@ -126,18 +128,29 @@ struct ArticleCardView: View {
     }
 
     private var summaryColor: Color {
-        isRead ? Color.secondary.opacity(0.75) : Color.primary.opacity(0.75)
+        let opacity = colorSchemeContrast == .increased
+        ? min(1.0, UIStylePolicy.summaryTextOpacity + 0.18)
+        : UIStylePolicy.summaryTextOpacity
+        return isRead ? Color.secondary.opacity(opacity) : Color.primary.opacity(opacity)
     }
 
     private var cardBackground: Color {
+        let contrastBoost = colorSchemeContrast == .increased ? 0.06 : 0
         if !useFullColorBackground {
-            return Color(feedColor).opacity(0.12)
+            return Color(feedColor).opacity(isRead
+                                           ? min(1.0, UIStylePolicy.cardTintOpacityRead + contrastBoost)
+                                           : min(1.0, UIStylePolicy.cardTintOpacity + contrastBoost))
         }
-        return isRead ? Color(feedColor).opacity(0.15) : Color(feedColor).opacity(0.5)
+        return isRead
+            ? Color(feedColor).opacity(min(1.0, UIStylePolicy.fullColorCardTintOpacityRead + contrastBoost))
+            : Color(feedColor).opacity(min(1.0, UIStylePolicy.fullColorCardTintOpacity + contrastBoost))
     }
     
     private var pillBackground: Color {
-        !isRead ? Color(feedColor).opacity(0.5) : Color(feedColor).opacity(0.2)
+        let contrastBoost = colorSchemeContrast == .increased ? 0.06 : 0
+        return !isRead
+        ? Color(feedColor).opacity(min(1.0, UIStylePolicy.chipTintOpacityUnread + contrastBoost))
+        : Color(feedColor).opacity(min(1.0, UIStylePolicy.chipTintOpacityRead + contrastBoost))
     }
 
     private func highlightableText(for content: String, baseColor: Color) -> Text {

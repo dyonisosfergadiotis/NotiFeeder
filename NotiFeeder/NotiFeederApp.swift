@@ -8,8 +8,8 @@ import SwiftData
 @main
 struct NotiFeederApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var theme = ThemeSettings()
+    private let watchSyncManager = PhoneWatchSyncManager.shared
 
     var body: some Scene {
         WindowGroup {
@@ -17,6 +17,9 @@ struct NotiFeederApp: App {
                 .environmentObject(ArticleStore.shared)
                 .environmentObject(theme)
                 .tint(theme.uiAccentColor)
+                .onAppear {
+                    watchSyncManager.activateSessionIfNeeded()
+                }
         }
         .modelContainer(for: FeedEntryModel.self)
     }
@@ -27,17 +30,5 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
 
         return true
-    }
-
-    private func loadFeedsFromStorage() -> [FeedSource] {
-        if let data = FeedStorage.defaults.data(forKey: "savedFeeds") {
-            do {
-                let feeds = try JSONDecoder().decode([FeedSource].self, from: data)
-                return feeds
-            } catch {
-                // If decoding fails, fall back to default feed
-            }
-        }
-        return [FeedSource(title: "MacRumors", url: "https://feeds.macrumors.com/MacRumors-All")]
     }
 }

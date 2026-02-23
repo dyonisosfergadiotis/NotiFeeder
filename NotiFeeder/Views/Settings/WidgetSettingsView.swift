@@ -25,7 +25,7 @@ struct WidgetSettingsView: View {
         Form {
             Section {
                 Toggle(isOn: $transparentEnabled) {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.xSmall) {
                         Text("Transparenter Hintergrund")
                             .font(.headline)
                         Text("Dein Widget übernimmt den Hintergrund vom Homescreen-Screenshot.")
@@ -38,7 +38,7 @@ struct WidgetSettingsView: View {
 
             if transparentEnabled {
                 Section("Homescreen-Screenshot") {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.small + 2) {
                         Text("Screenshot ohne Widgets aufnehmen, dann hier auswählen.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -48,14 +48,14 @@ struct WidgetSettingsView: View {
                                 .resizable()
                                 .scaledToFill()
                                 .frame(height: 150)
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: UIStylePolicy.Radius.medium, style: .continuous))
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                        .strokeBorder(Color.black.opacity(0.08))
+                                    RoundedRectangle(cornerRadius: UIStylePolicy.Radius.medium, style: .continuous)
+                                        .strokeBorder(Color.black.opacity(UIStylePolicy.glassAccentOpacity))
                                 )
                         } else {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(Color.secondary.opacity(0.08))
+                            RoundedRectangle(cornerRadius: UIStylePolicy.Radius.medium, style: .continuous)
+                                .fill(Color.secondary.opacity(UIStylePolicy.glassAccentOpacity))
                                 .frame(height: 120)
                                 .overlay(
                                     VStack(spacing: 6) {
@@ -109,8 +109,8 @@ struct WidgetSettingsView: View {
                 }
 
                 Section("Feinabstimmung") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.medium) {
+                        VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.small - 2) {
                             HStack {
                                 Text("Horizontal")
                                 Spacer()
@@ -120,7 +120,7 @@ struct WidgetSettingsView: View {
                             Slider(value: $offsetX, in: -80...80, step: 1)
                                 .tint(theme.uiAccentColor)
                         }
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.small - 2) {
                             HStack {
                                 Text("Vertikal")
                                 Spacer()
@@ -163,6 +163,7 @@ struct WidgetSettingsView: View {
         }
         .navigationTitle("Widgets")
         .navigationBarTitleDisplayMode(.inline)
+        .sheetCornerAlignedScrollContent()
         .onAppear {
             backgroundImage = WidgetSettingsStore.loadBackground()
         }
@@ -197,11 +198,11 @@ struct WidgetSettingsView: View {
     }
 
     private var accentPreview: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
+        RoundedRectangle(cornerRadius: UIStylePolicy.Radius.large, style: .continuous)
             .fill(
                 LinearGradient(
                     colors: [
-                        theme.uiAccentColor.opacity(0.25),
+                        theme.uiAccentColor.opacity(UIStylePolicy.chipTintOpacityUnread + 0.03),
                         theme.uiAccentColor.opacity(0.6)
                     ],
                     startPoint: .topLeading,
@@ -217,12 +218,12 @@ struct WidgetSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .padding(12),
+                .padding(UIStylePolicy.Spacing.medium),
                 alignment: .bottomLeading
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(theme.uiAccentColor.opacity(0.25))
+                RoundedRectangle(cornerRadius: UIStylePolicy.Radius.large, style: .continuous)
+                    .strokeBorder(theme.uiAccentColor.opacity(UIStylePolicy.chipTintOpacityUnread + 0.03))
             )
     }
 }

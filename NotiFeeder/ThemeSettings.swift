@@ -6,39 +6,9 @@ import UIKit
 
 // Version 1.2 features: What's New splash + a few inline info bubbles
 
-struct FeedColorOption: Identifiable, Equatable {
-    let id: String
-    let name: String
-    let hex: String
-
-    init(name: String, hex: String) {
-        self.id = hex
-        self.name = name
-        self.hex = hex
-    }
-
-    var color: Color {
-        Color.fromHex(hex)
-    }
-
-    static let defaultPalette: [FeedColorOption] = [
-        FeedColorOption(name: "Karmin", hex: "#F3A2A2"),
-        FeedColorOption(name: "Mandarine", hex: "#F4B989"),
-        FeedColorOption(name: "Goldtulpe", hex: "#F7D783"),
-        FeedColorOption(name: "Limette", hex: "#CFE08E"),
-        FeedColorOption(name: "Jade", hex: "#B7E0C8"),
-        FeedColorOption(name: "Meerblau", hex: "#A6DEDA"),
-        FeedColorOption(name: "Indigo", hex: "#A9C8F2"),
-        FeedColorOption(name: "Amethyst", hex: "#C4AEEF"),
-        FeedColorOption(name: "Sand", hex: "#DDBF8F")
-    ]
-
-    static func option(for hex: String) -> FeedColorOption? {
-        defaultPalette.first { $0.hex.caseInsensitiveCompare(hex) == .orderedSame }
-    }
-}
-
 final class ThemeSettings: ObservableObject {
+    private static let fixedSkyBlueHex = "#A9C8F2"
+
     private enum Keys {
         static let feedColorMap = "feedColorMap"
         static let uiAccentHex = "uiAccentHex"
@@ -46,8 +16,8 @@ final class ThemeSettings: ObservableObject {
 
     private static let appGroupSuite = "group.notiFeeder"
 
-    /// Carefully chosen accent tone reserved for the overall UI chrome.
-    @Published private(set) var uiAccentHex: String = "#A9C8F2" // default; overridden in init
+    /// Fixed app accent tone (sky blue) used across the whole UI.
+    @Published private(set) var uiAccentHex: String = ThemeSettings.fixedSkyBlueHex
 
     private let defaults: UserDefaults
     private(set) var decoder = JSONDecoder()
@@ -58,7 +28,7 @@ final class ThemeSettings: ObservableObject {
     init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
         loadFeedColors()
-        self.uiAccentHex = loadUIAccentHex()
+        self.uiAccentHex = Self.fixedSkyBlueHex
         syncAccentToAppGroup()
     }
 
@@ -68,22 +38,6 @@ final class ThemeSettings: ObservableObject {
     
     var uiSwipeColor: Color {
         Color.fromHex(uiAccentHex) //Color.fromHex(feedcolor)
-    }
-
-    var uiAccentHexString: String {
-        uiAccentHex
-    }
-
-    func setUIAccentColor(_ color: Color) {
-        #if canImport(UIKit)
-        let uiColor = UIColor(color)
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        if uiColor.getRed(&r, green: &g, blue: &b, alpha: &a) {
-            let hex = String(format: "#%02lX%02lX%02lX", lroundf(Float(r * 255)), lroundf(Float(g * 255)), lroundf(Float(b * 255)))
-            uiAccentHex = hex
-            saveUIAccentHex()
-        }
-        #endif
     }
 
     func color(for feedURL: String?) -> Color {
@@ -149,35 +103,20 @@ final class ThemeSettings: ObservableObject {
         return "#" + trimmed
     }
 
-    private func loadUIAccentHex() -> String {
-        if let stored = defaults.string(forKey: Keys.uiAccentHex), !stored.isEmpty {
-            return stored
-        }
-        if let groupStored = appGroupDefaults?.string(forKey: Keys.uiAccentHex), !groupStored.isEmpty {
-            return groupStored
-        }
-        return "#A9C8F2"
-    }
-
-    private func saveUIAccentHex() {
-        defaults.set(uiAccentHex, forKey: Keys.uiAccentHex)
-        appGroupDefaults?.set(uiAccentHex, forKey: Keys.uiAccentHex)
-    }
-
     private var appGroupDefaults: UserDefaults? {
         UserDefaults(suiteName: Self.appGroupSuite)
     }
 
     private func syncAccentToAppGroup() {
         guard let group = appGroupDefaults else { return }
-        if group.string(forKey: Keys.uiAccentHex) != uiAccentHex {
-            group.set(uiAccentHex, forKey: Keys.uiAccentHex)
+        if group.string(forKey: Keys.uiAccentHex) != Self.fixedSkyBlueHex {
+            group.set(Self.fixedSkyBlueHex, forKey: Keys.uiAccentHex)
         }
     }
 }
 
 extension Color {
-    static func fromHex(_ hex: String) -> Color {
+    public static func fromHex(_ hex: String) -> Color {
         let sanitized = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         var int: UInt64 = 0
         Scanner(string: sanitized).scanHexInt64(&int)

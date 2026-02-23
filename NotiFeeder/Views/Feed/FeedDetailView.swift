@@ -223,7 +223,7 @@ struct FeedDetailView: View {
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
         .background(
             LinearGradient(
-                colors: [headerTint.opacity(0.3), resolvedFeedColor.opacity(0.1)],
+                colors: [headerTint.opacity(0.16), resolvedFeedColor.opacity(UIStylePolicy.glassAccentOpacity)],
                 startPoint: .top,
                 endPoint: .bottom)
         )
@@ -235,12 +235,33 @@ struct FeedDetailView: View {
             // Left cluster
             if bothExpanded || isLeftBarExpanded {
                 HStack(spacing: 18) {
-                    Button(action: { activeSheet = .readerSettings }) { Image(systemName: "textformat.size") }
-                    Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) { Image(systemName: "safari") }
-                    VStack{Button(action: { gatherShareContent() }) { Image(systemName: "square.and.arrow.up") }}.padding(.bottom,4)
+                    Button(action: { activeSheet = .readerSettings }) {
+                        Image(systemName: "textformat.size")
+                            .foregroundStyle(UIStylePolicy.neutralIcon)
+                    }
+                    .minimumHitTarget()
+                    .accessibilityLabel("Lesedarstellung")
+                    .accessibilityHint("Öffnet Einstellungen für Schrift und Layout")
+                    Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) {
+                        Image(systemName: "safari")
+                            .foregroundStyle(UIStylePolicy.neutralIcon)
+                    }
+                    .minimumHitTarget()
+                    .accessibilityLabel("In Safari öffnen")
+                    VStack {
+                        Button(action: { gatherShareContent() }) {
+                            Image(systemName: "square.and.arrow.up")
+                                .foregroundStyle(UIStylePolicy.neutralIcon)
+                        }
+                    }.padding(.bottom,4)
+                    .minimumHitTarget()
+                    .accessibilityLabel("Teilen")
                     Button(action: { onToggleReadAction() }) {
                         Image(systemName: isReadLocal ? "eye.slash" : "eye")
+                            .foregroundStyle(UIStylePolicy.neutralIcon)
                     }
+                    .minimumHitTarget()
+                    .accessibilityLabel(isReadLocal ? "Als ungelesen markieren" : "Als gelesen markieren")
                 }.padding(.horizontal, 8)
             } else {
                 Button {
@@ -250,7 +271,10 @@ struct FeedDetailView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
+                        .foregroundStyle(UIStylePolicy.neutralIcon)
                 }
+                .minimumHitTarget()
+                .accessibilityLabel("Aktionen einblenden")
             }
 
             Spacer(minLength: 8)
@@ -258,9 +282,19 @@ struct FeedDetailView: View {
             // Right cluster
             if bothExpanded || isRightBarExpanded {
                 HStack(spacing: 18) {
-                    Button(action: { goToPrevious() }) { Image(systemName: "chevron.left") }
+                    Button(action: { goToPrevious() }) {
+                        Image(systemName: "chevron.left")
+                            .foregroundStyle(UIStylePolicy.iconTint(isActive: !isAtFirstEntry, accent: resolvedFeedColor))
+                    }
+                        .minimumHitTarget()
+                        .accessibilityLabel("Vorheriger Artikel")
                         .disabled(isAtFirstEntry)
-                    Button(action: { goToNext() }) { Image(systemName: "chevron.right") }
+                    Button(action: { goToNext() }) {
+                        Image(systemName: "chevron.right")
+                            .foregroundStyle(UIStylePolicy.iconTint(isActive: !isAtLastEntry, accent: resolvedFeedColor))
+                    }
+                        .minimumHitTarget()
+                        .accessibilityLabel("Nächster Artikel")
                         .disabled(isAtLastEntry)
                 }.padding(.horizontal, 8)
             } else {
@@ -272,7 +306,10 @@ struct FeedDetailView: View {
                     }
                 } label: {
                     Image(systemName: "chevron.left.chevron.right")
+                        .foregroundStyle(UIStylePolicy.iconTint(isActive: true, accent: resolvedFeedColor))
                 }
+                .minimumHitTarget()
+                .accessibilityLabel("Navigation einblenden")
             }
         }
     }
@@ -303,10 +340,10 @@ struct FeedDetailView: View {
                 .frame(maxHeight: .infinity)
                 .edgesIgnoringSafeArea(.bottom)
         }
-        .animation(.interactiveSpring(response: 0.36, dampingFraction: 0.88, blendDuration: 0.2), value: isScrollingDown)
+        .animation(UIStylePolicy.Motion.detailScrollSpring, value: isScrollingDown)
         .offset(x: contentOffset)
         .opacity(contentOpacity)
-        .background(headerTint.opacity(0.3))
+        .background(headerTint.opacity(0.14))
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(action: { toggleBookmark() }) {
@@ -316,7 +353,9 @@ struct FeedDetailView: View {
                             .mask(Rectangle().scaleEffect(y: isBookmarked ? 1 : 0, anchor: .top))
                     }
                 }
-                .tint(feedColor)
+                .minimumHitTarget()
+                .accessibilityLabel(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen")
+                .foregroundStyle(UIStylePolicy.iconTint(isActive: isBookmarked, accent: resolvedFeedColor))
             }
         }
         .toolbar {
@@ -324,7 +363,6 @@ struct FeedDetailView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationTitle(isScrollingDown ? entry.title : "")
-        .tint(feedColor)
         .onAppear {
             store.markRecentlyRead(articleID: entry.link)
             isReadLocal = store.isRead(articleID: entry.link)
@@ -337,7 +375,7 @@ struct FeedDetailView: View {
             animateEntryTransition()
         }
         .onChange(of: isScrollingDown) { _, scrollingDown in
-            withAnimation(.interactiveSpring(response: 0.36, dampingFraction: 0.88, blendDuration: 0.2)) {
+            withAnimation(UIStylePolicy.Motion.detailScrollSpring) {
                 if scrollingDown {
                     isLeftBarExpanded = false
                     isRightBarExpanded = false
@@ -353,14 +391,14 @@ struct FeedDetailView: View {
             switch sheet {
             case .share(let payload, _):
                 ShareSheet(items: [payload])
-                    .presentationDetents([.fraction(0.5)])
+                    .presentationDetents([UIStylePolicy.Sheet.mediumDetent])
             case .readerSettings:
                 ReaderSettingsPanel(textAlignment: $readerTextAlignmentRaw,
                                     fontScale: $readerFontScale,
                                     fontFamily: $readerFontFamily,
                                     lineSpacing: $readerLineSpacing,
                                     feedColor: .constant(resolvedFeedColor))
-                    .presentationDetents([.fraction(0.5)])
+                    .presentationDetents([UIStylePolicy.Sheet.mediumDetent])
             }
         }
     }
@@ -391,9 +429,10 @@ struct FeedDetailView: View {
               @media (prefers-color-scheme: light) { body { color: #111111; } a { color: \(accentHex); } html { background-color: #ffffff; } }
               img, iframe { display: block; max-width: 90%; height: auto; border-radius: 10px; margin: 16px auto; }
               iframe { aspect-ratio: 16/9; }
+              .article-end-spacer { height: calc(120px + env(safe-area-inset-bottom)); width: 100%; }
             </style>
           </head>
-          <body>\(fixYouTubeIframes(in: rawBody))</body>
+          <body>\(fixYouTubeIframes(in: rawBody))<div class="article-end-spacer" aria-hidden="true"></div></body>
         </html>
         """
     }
@@ -403,8 +442,6 @@ struct FeedDetailView: View {
     }
 
     private var headerTint: Color { resolvedFeedColor }
-    
-    private var accentColor: Color { theme.uiAccentColor }
     
     private func gatherShareContent() {
         webView.evaluateJavaScript("window.getSelection().toString();") { result, _ in

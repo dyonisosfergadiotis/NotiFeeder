@@ -43,6 +43,7 @@
 
 /* Begin PBXFileReference section */
 		E54E5A902EBA259A00BD1671 /* NotiFeeder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NotiFeeder.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E590BE792F436B4C000F2FDC /* NotiFeeder AW.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "NotiFeeder AW.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		E59D296B2F30B4C000099C61 /* NotiFeeder WidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "NotiFeeder WidgetExtension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		E59D296D2F30B4C000099C61 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		E59D296F2F30B4C000099C61 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
@@ -50,6 +51,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		E590BE822F436B4C000F2FDC /* Exceptions for "NotiFeeder AW" folder in "NotiFeeder AW" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = E590BE782F436B4C000F2FDC /* NotiFeeder AW */;
+		};
 		E59D29832F30B4C100099C61 /* Exceptions for "NotiFeeder Widget" folder in "NotiFeeder WidgetExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -75,12 +83,25 @@
 			path = NotiFeeder;
 			sourceTree = "<group>";
 		};
+		E590BE7A2F436B4C000F2FDC /* NotiFeeder AW */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				E590BE822F436B4C000F2FDC /* Exceptions for "NotiFeeder AW" folder in "NotiFeeder AW" target */,
+			);
+			path = "NotiFeeder AW";
+			sourceTree = "<group>";
+		};
 		E59D29712F30B4C000099C61 /* NotiFeeder Widget */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				E59D29832F30B4C100099C61 /* Exceptions for "NotiFeeder Widget" folder in "NotiFeeder WidgetExtension" target */,
 			);
 			path = "NotiFeeder Widget";
+			sourceTree = "<group>";
+		};
+		E5C0A10034A0000000000001 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -95,6 +116,13 @@
 				E5B610C22ECC9B1D00FE6D54 /* FirebaseAI in Frameworks */,
 				E5B610C62ECC9B1D00FE6D54 /* FirebaseAnalytics in Frameworks */,
 				E5B610C82ECC9B1D00FE6D54 /* FirebaseAnalyticsCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E590BE762F436B4C000F2FDC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -116,6 +144,8 @@
 				E59D29852F30B4C800099C61 /* NotiFeeder WidgetExtension.entitlements */,
 				E54E5A922EBA259A00BD1671 /* NotiFeeder */,
 				E59D29712F30B4C000099C61 /* NotiFeeder Widget */,
+				E5C0A10034A0000000000001 /* Shared */,
+				E590BE7A2F436B4C000F2FDC /* NotiFeeder AW */,
 				E59D296C2F30B4C000099C61 /* Frameworks */,
 				E54E5A912EBA259A00BD1671 /* Products */,
 			);
@@ -126,6 +156,7 @@
 			children = (
 				E54E5A902EBA259A00BD1671 /* NotiFeeder.app */,
 				E59D296B2F30B4C000099C61 /* NotiFeeder WidgetExtension.appex */,
+				E590BE792F436B4C000F2FDC /* NotiFeeder AW.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -158,6 +189,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				E54E5A922EBA259A00BD1671 /* NotiFeeder */,
+				E5C0A10034A0000000000001 /* Shared */,
 			);
 			name = NotiFeeder;
 			packageProductDependencies = (
@@ -169,6 +201,28 @@
 			);
 			productName = NotiFeeder;
 			productReference = E54E5A902EBA259A00BD1671 /* NotiFeeder.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E590BE782F436B4C000F2FDC /* NotiFeeder AW */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E590BE832F436B4C000F2FDC /* Build configuration list for PBXNativeTarget "NotiFeeder AW" */;
+			buildPhases = (
+				E590BE752F436B4C000F2FDC /* Sources */,
+				E590BE762F436B4C000F2FDC /* Frameworks */,
+				E590BE772F436B4C000F2FDC /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				E590BE7A2F436B4C000F2FDC /* NotiFeeder AW */,
+			);
+			name = "NotiFeeder AW";
+			packageProductDependencies = (
+			);
+			productName = "NotiFeeder AW";
+			productReference = E590BE792F436B4C000F2FDC /* NotiFeeder AW.app */;
 			productType = "com.apple.product-type.application";
 		};
 		E59D296A2F30B4C000099C61 /* NotiFeeder WidgetExtension */ = {
@@ -185,6 +239,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				E59D29712F30B4C000099C61 /* NotiFeeder Widget */,
+				E5C0A10034A0000000000001 /* Shared */,
 			);
 			name = "NotiFeeder WidgetExtension";
 			packageProductDependencies = (
@@ -205,6 +260,9 @@
 				TargetAttributes = {
 					E54E5A8F2EBA259A00BD1671 = {
 						CreatedOnToolsVersion = 26.0.1;
+					};
+					E590BE782F436B4C000F2FDC = {
+						CreatedOnToolsVersion = 26.2;
 					};
 					E59D296A2F30B4C000099C61 = {
 						CreatedOnToolsVersion = 26.2;
@@ -230,12 +288,20 @@
 			targets = (
 				E54E5A8F2EBA259A00BD1671 /* NotiFeeder */,
 				E59D296A2F30B4C000099C61 /* NotiFeeder WidgetExtension */,
+				E590BE782F436B4C000F2FDC /* NotiFeeder AW */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		E54E5A8E2EBA259A00BD1671 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E590BE772F436B4C000F2FDC /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -253,6 +319,13 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		E54E5A8C2EBA259A00BD1671 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E590BE752F436B4C000F2FDC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -408,7 +481,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = NotiFeeder/NotiFeeder.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1.5;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8W4U9DBYVS;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -422,7 +495,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5;
+				MARKETING_VERSION = 1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = de.DyonisosFergadiotis.NotiFeeder;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -443,7 +516,7 @@
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
 				CODE_SIGN_ENTITLEMENTS = NotiFeeder/NotiFeeder.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1.5;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8W4U9DBYVS;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -457,7 +530,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5;
+				MARKETING_VERSION = 1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = de.DyonisosFergadiotis.NotiFeeder;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -467,6 +540,68 @@
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E590BE802F436B4C000F2FDC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8W4U9DBYVS;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "NotiFeeder AW/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "NotiFeeder AW";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "DyonisosFergadiotis.NotiFeeder-AW";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		E590BE812F436B4C000F2FDC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8W4U9DBYVS;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "NotiFeeder AW/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "NotiFeeder AW";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "DyonisosFergadiotis.NotiFeeder-AW";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = NO;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
 			};
 			name = Release;
 		};
@@ -551,6 +686,15 @@
 			buildConfigurations = (
 				E54E5A9C2EBA259C00BD1671 /* Debug */,
 				E54E5A9D2EBA259C00BD1671 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E590BE832F436B4C000F2FDC /* Build configuration list for PBXNativeTarget "NotiFeeder AW" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E590BE802F436B4C000F2FDC /* Debug */,
+				E590BE812F436B4C000F2FDC /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -18,7 +18,10 @@ struct OnboardingFlowView: View {
             ZStack {
                 switch viewModel.step {
                 case .intro:
-                    OnboardingIntroView(startAction: { viewModel.next() })
+                    OnboardingIntroView(
+                        startAction: { viewModel.next() },
+                        skipAction: { onFinish(nil) }
+                    )
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                 case .enterURL:
                     OnboardingEnterURLView(viewModel: viewModel)
@@ -35,16 +38,19 @@ struct OnboardingFlowView: View {
             }
             .animation(.easeInOut(duration: 0.22), value: viewModel.step)
 
-            HStack {
-                if viewModel.step != .intro && viewModel.step != .done {
+            if viewModel.step != .intro && viewModel.step != .done {
+                HStack {
+                    Button("Überspringen") { onFinish(nil) }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
                     Button("Zurück") { viewModel.back() }
                         .buttonStyle(.bordered)
+                    nextButton
                 }
-                Spacer()
-                nextButton
+                .padding()
+                .background(.ultraThinMaterial)
             }
-            .padding()
-            .background(.ultraThinMaterial)
         }
     }
 
@@ -52,9 +58,7 @@ struct OnboardingFlowView: View {
     private var nextButton: some View {
         switch viewModel.step {
         case .intro:
-            Button("Starten") { viewModel.next() }
-                .buttonStyle(.borderedProminent)
-                .tint(theme.uiAccentColor)
+            EmptyView()
         case .enterURL:
             Button("Weiter") {
                 viewModel.next()
@@ -79,50 +83,115 @@ struct OnboardingFlowView: View {
 
 struct OnboardingIntroView: View {
     var startAction: () -> Void
+    var skipAction: () -> Void
+    
+    private let items: [OnboardingIntroItem] = [
+        OnboardingIntroItem(
+            icon: "square.stack.3d.up.fill",
+            title: "Alles an einem Ort",
+            subtitle: "Sammle deine Lieblingsquellen und behalte neue Artikel zentral im Blick."
+        ),
+        OnboardingIntroItem(
+            icon: "bolt.fill",
+            title: "Schnell erfassen",
+            subtitle: "Klare Übersicht, schnelle Navigation und ein ruhiges Lesegefühl ohne Ballast."
+        ),
+        OnboardingIntroItem(
+            icon: "checkmark.seal.fill",
+            title: "Volle Kontrolle",
+            subtitle: "Markiere gelesen, passe Feeds an und starte mit einem Setup, das zu dir passt."
+        )
+    ]
+    
     var body: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 12) {
-                Text("Willkommen bei deinem Feed")
+        VStack(alignment: .leading, spacing: 26) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Willkommen")
                     .font(.largeTitle.weight(.semibold))
-                    .multilineTextAlignment(.center)
-                Text("Sammle und lese Nachrichten an einem Ort – schnell, übersichtlich, angenehm.")
+                    .lineLimit(1)
+                Text("Dein persönlicher Nachrichten-Feed. Klar, fokussiert und angenehm zu lesen.")
+                    .font(.body)
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.top, 24)
-
-            // Mock cards
-            VStack(spacing: 12) {
-                ForEach(0..<3) { idx in
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(Color(.secondarySystemBackground))
-                        .frame(height: 64)
-                        .overlay(
-                            HStack {
-                                Circle().fill(.blue.opacity(0.2)).frame(width: 28, height: 28)
-                                VStack(alignment: .leading, spacing: 6) {
-                                    RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.15)).frame(height: 10)
-                                    RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.1)).frame(height: 10)
-                                }
-                                Spacer()
-                            }
-                            .padding(.horizontal)
-                        )
-                        .padding(.horizontal)
-                        .shadow(color: .black.opacity(0.04), radius: 8, y: 4)
+            
+            VStack(spacing: 14) {
+                ForEach(items) { item in
+                    OnboardingIntroRow(item: item)
                 }
             }
-
+            
             Spacer()
-
-            Button(action: startAction) {
-                Text("Los geht’s")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .padding(.horizontal)
         }
+        .padding(.horizontal, 20)
+        .safeAreaInset(edge: .bottom) {
+            HStack(spacing: 12) {
+                Button("Überspringen", action: skipAction)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(action: startAction) {
+                    Text("Starten")
+                        .font(.headline)
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .background(themeTintShape)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 8)
+        }
+    }
+    
+    private var themeTintShape: some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(Color.accentColor)
+    }
+}
+
+private struct OnboardingIntroItem: Identifiable {
+    let id = UUID()
+    let icon: String
+    let title: String
+    let subtitle: String
+}
+
+private struct OnboardingIntroRow: View {
+    let item: OnboardingIntroItem
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.14))
+                    .frame(width: 36, height: 36)
+                Image(systemName: item.icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
+            
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(item.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
     }
 }
 
@@ -131,44 +200,58 @@ struct OnboardingEnterURLView: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(spacing: 16) {
-            Text("Feed-URL eingeben")
-                .font(.title2.weight(.semibold))
-            Text("Wir prüfen, ob die Adresse erreichbar und erlaubt ist.")
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.bottom, 8)
-
-            TextField("https://…", text: $viewModel.feedURL)
-                .textContentType(.URL)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.go)
-                .focused($focused)
-                .textFieldStyle(.roundedBorder)
-                .padding(.horizontal)
-                .onSubmit { Task { await viewModel.validateURL() } }
-
-            HStack(spacing: 8) {
-                if viewModel.isValidating {
-                    ProgressView().progressViewStyle(.circular)
-                    Text("Prüfe…")
-                } else if let valid = viewModel.urlIsValid {
-                    Image(systemName: valid ? "checkmark.circle.fill" : "xmark.octagon.fill")
-                        .foregroundStyle(valid ? .green : .red)
-                    Text(valid ? "URL ist gültig" : (viewModel.validationError ?? "Ungültige URL"))
-                        .foregroundStyle(valid ? .green : .red)
-                } else {
-                    Text("Noch nicht geprüft").foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Feed hinzufügen")
+                        .font(.title2.weight(.semibold))
+                    Text("Füge deine RSS-Adresse ein. Einen Namen kannst du optional setzen.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .padding(.top, 24)
+
+                VStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Feed-URL")
+                            .font(.subheadline.weight(.semibold))
+                        TextField("https://example.com/feed.xml", text: $viewModel.feedURL)
+                            .textContentType(.URL)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .submitLabel(.next)
+                            .focused($focused)
+                            .onSubmit { focused = false }
+                    }
+                    .padding(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color(.secondarySystemBackground))
+                    )
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Titel (optional)")
+                            .font(.subheadline.weight(.semibold))
+                        TextField("z. B. Tech News", text: $viewModel.feedName)
+                            .textInputAutocapitalization(.words)
+                            .submitLabel(.done)
+                    }
+                    .padding(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color(.secondarySystemBackground))
+                    )
+                }
+
+                Text("Tipp: Wenn du ohne Feed starten willst, nutze unten links „Überspringen“.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 0)
             }
-            .padding(.top, 4)
-
-            Button("URL prüfen") { Task { await viewModel.validateURL() } }
-                .buttonStyle(.bordered)
-
-            Spacer()
+            .padding(.horizontal, 20)
         }
         .onAppear { focused = true }
     }

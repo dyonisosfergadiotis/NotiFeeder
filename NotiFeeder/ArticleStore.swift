@@ -23,8 +23,8 @@ final class ArticleStore: ObservableObject {
     static let shared = ArticleStore()
 
     // Persisted keys
-    private let articlesKey = "savedArticles"
-    private let readKey = "readArticleIDs"
+    private let articlesKey = FeedStorage.Keys.savedArticles
+    private let readKey = FeedStorage.Keys.readArticleIDs
     private let maxArticlesPerFeed = 100
 
     // In-memory cache
@@ -38,43 +38,62 @@ final class ArticleStore: ObservableObject {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private let queue = DispatchQueue(label: "ArticleStore.queue", qos: .utility)
+    private var cloudSyncObservers: [NSObjectProtocol] = []
 
-    private init(defaults: UserDefaults = .standard) {
+    private init(defaults: UserDefaults = FeedStorage.defaults) {
         self.defaults = defaults
         decoder.dateDecodingStrategy = .iso8601
         encoder.dateEncodingStrategy = .iso8601
+        observeCloudSync()
         loadFromDisk()
+    }
+
+    deinit {
+        for observer in cloudSyncObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     // MARK: Persistence
     private func loadFromDisk() {
         // Load articles
-        if let data = defaults.data(forKey: articlesKey),
+        if let data = FeedCacheSync.bestAvailableData(for: articlesKey) ?? defaults.data(forKey: articlesKey),
            let loaded = try? decoder.decode([String: [StoredFeedArticle]].self, from: data) {
-            self.articlesByFeed = loaded
+            articlesByFeed = loaded
+        } else {
+            articlesByFeed = [:]
         }
         // Load read-state
-        if let data = defaults.data(forKey: readKey),
+        if let data = FeedCacheSync.bestAvailableData(for: readKey) ?? defaults.data(forKey: readKey),
            let loaded = try? decoder.decode([String].self, from: data) {
-            self.readArticleIDs = Set(loaded)
+            readArticleIDs = Set(loaded)
+        } else {
+            readArticleIDs = []
         }
     }
 
     private func saveArticlesToDisk() {
+        let snapshot = articlesByFeed
         queue.async { [weak self] in
             guard let self = self else { return }
-            if let data = try? self.encoder.encode(self.articlesByFeed) {
-                self.defaults.set(data, forKey: self.articlesKey)
+            if let data = try? self.encoder.encode(snapshot) {
+                _ = FeedCacheSync.write(data, for: self.articlesKey)
+                Task { @MainActor in
+                    FeedICloudSyncManager.shared.pushLocalData(data, for: self.articlesKey)
+                }
             }
         }
     }
 
     private func saveReadStateToDisk() {
+        let array = Array(readArticleIDs)
         queue.async { [weak self] in
             guard let self = self else { return }
-            let array = Array(self.readArticleIDs)
             if let data = try? self.encoder.encode(array) {
-                self.defaults.set(data, forKey: self.readKey)
+                _ = FeedCacheSync.write(data, for: self.readKey)
+                Task { @MainActor in
+                    FeedICloudSyncManager.shared.pushLocalData(data, for: self.readKey)
+                }
             }
         }
     }
@@ -130,5 +149,34 @@ final class ArticleStore: ObservableObject {
 
     func isRecentlyRead(articleID: String) -> Bool {
         recentlyReadArticleIDs.contains(articleID) && !readArticleIDs.contains(articleID)
+    }
+
+    @MainActor
+    func syncFromCloudIfNeeded() {
+        FeedICloudSyncManager.shared.syncDataFromCloudIfNeeded(for: articlesKey)
+        FeedICloudSyncManager.shared.syncDataFromCloudIfNeeded(for: readKey)
+        loadFromDisk()
+    }
+
+    private func observeCloudSync() {
+        let center = NotificationCenter.default
+
+        let articlesObserver = center.addObserver(
+            forName: .feedSavedArticlesDidSyncFromICloud,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.loadFromDisk()
+        }
+
+        let readObserver = center.addObserver(
+            forName: .feedReadArticleIDsDidSyncFromICloud,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.loadFromDisk()
+        }
+
+        cloudSyncObservers = [articlesObserver, readObserver]
     }
 }

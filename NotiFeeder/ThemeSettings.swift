@@ -10,7 +10,7 @@ final class ThemeSettings: ObservableObject {
     private static let fixedSkyBlueHex = "#A9C8F2"
 
     private enum Keys {
-        static let feedColorMap = "feedColorMap"
+        static let feedColorMap = FeedStorage.Keys.feedColorMap
         static let uiAccentHex = "uiAccentHex"
     }
 
@@ -22,14 +22,22 @@ final class ThemeSettings: ObservableObject {
     private let defaults: UserDefaults
     private(set) var decoder = JSONDecoder()
     private(set) var encoder = JSONEncoder()
+    private var cloudSyncObservers: [NSObjectProtocol] = []
 
     @Published private(set) var feedColorMap: [String: String] = [:]
 
     init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
+        observeCloudSync()
         loadFeedColors()
         self.uiAccentHex = Self.fixedSkyBlueHex
         syncAccentToAppGroup()
+    }
+
+    deinit {
+        for observer in cloudSyncObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     var uiAccentColor: Color {
@@ -81,7 +89,8 @@ final class ThemeSettings: ObservableObject {
     }
 
     private func loadFeedColors() {
-        guard let data = defaults.data(forKey: Keys.feedColorMap),
+        guard let data = FeedCacheSync.bestAvailableData(for: Keys.feedColorMap)
+                ?? defaults.data(forKey: Keys.feedColorMap),
               let map = try? decoder.decode([String: String].self, from: data) else {
             feedColorMap = [:]
             return
@@ -91,8 +100,17 @@ final class ThemeSettings: ObservableObject {
 
     private func saveFeedColors() {
         if let data = try? encoder.encode(feedColorMap) {
-            defaults.set(data, forKey: Keys.feedColorMap)
+            _ = FeedCacheSync.write(data, for: Keys.feedColorMap)
+            Task { @MainActor in
+                FeedICloudSyncManager.shared.pushLocalData(data, for: Keys.feedColorMap)
+            }
         }
+    }
+
+    @MainActor
+    func syncFromCloudIfNeeded() {
+        FeedICloudSyncManager.shared.syncDataFromCloudIfNeeded(for: Keys.feedColorMap)
+        loadFeedColors()
     }
 
     private func normalizeHex(_ hex: String) -> String {
@@ -112,6 +130,17 @@ final class ThemeSettings: ObservableObject {
         if group.string(forKey: Keys.uiAccentHex) != Self.fixedSkyBlueHex {
             group.set(Self.fixedSkyBlueHex, forKey: Keys.uiAccentHex)
         }
+    }
+
+    private func observeCloudSync() {
+        let observer = NotificationCenter.default.addObserver(
+            forName: .feedColorMapDidSyncFromICloud,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.loadFeedColors()
+        }
+        cloudSyncObservers.append(observer)
     }
 }
 

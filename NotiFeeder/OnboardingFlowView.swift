@@ -259,6 +259,7 @@ struct OnboardingEnterURLView: View {
 
 struct OnboardingEnterDetailsView: View {
     @ObservedObject var viewModel: OnboardingViewModel
+    @EnvironmentObject private var theme: ThemeSettings
 
     private let symbolCandidates = [
         "newspaper", "globe", "bolt.horizontal", "bubble.left.and.bubble.right", "bookmark", "star", "antenna.radiowaves.left.and.right"
@@ -298,8 +299,40 @@ struct OnboardingEnterDetailsView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Farbe")
                         .font(.headline)
-                    ColorPicker("Farbe wählen", selection: $viewModel.selectedColor, supportsOpacity: false)
-                        .labelsHidden()
+                    HStack(spacing: 12) {
+                        Spacer(minLength: 0)
+
+                        ForEach(FeedColorOption.defaultPalette) { option in
+                            let isSelected = isPaletteOptionSelected(option)
+
+                            ZStack {
+                                Circle()
+                                    .fill(option.color)
+                                    .frame(width: 28, height: 28)
+                                    .overlay {
+                                        if isSelected {
+                                            Circle().stroke(theme.uiAccentColor, lineWidth: 3)
+                                        }
+                                    }
+
+                                if isSelected {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2.bold())
+                                        .foregroundStyle(.black.opacity(0.7))
+                                }
+                            }
+                            .contentShape(Circle())
+                            .onTapGesture {
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    viewModel.selectedColor = option.color
+                                }
+                            }
+                            .shadow(color: .black.opacity(0.08), radius: 3, x: 0, y: 1)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 4)
                 }
                 .padding(.horizontal)
 
@@ -328,6 +361,18 @@ struct OnboardingEnterDetailsView: View {
             }
             .padding(.bottom, 24)
         }
+        .onAppear {
+            guard FeedColorOption.defaultPalette.contains(where: isPaletteOptionSelected) == false else { return }
+            if let first = FeedColorOption.defaultPalette.first {
+                viewModel.selectedColor = first.color
+            }
+        }
+    }
+
+    private func isPaletteOptionSelected(_ option: FeedColorOption) -> Bool {
+        let selectedHex = viewModel.selectedColor.toHex()?.trimmingCharacters(in: CharacterSet(charactersIn: "#")).lowercased()
+        let optionHex = option.hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")).lowercased()
+        return selectedHex == optionHex
     }
 }
 

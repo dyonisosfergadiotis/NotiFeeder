@@ -10,11 +10,6 @@
 		E59D296E2F30B4C000099C61 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E59D296D2F30B4C000099C61 /* WidgetKit.framework */; };
 		E59D29702F30B4C000099C61 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E59D296F2F30B4C000099C61 /* SwiftUI.framework */; };
 		E59D297F2F30B4C100099C61 /* NotiFeeder WidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E59D296B2F30B4C000099C61 /* NotiFeeder WidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		E5B610C22ECC9B1D00FE6D54 /* FirebaseAI in Frameworks */ = {isa = PBXBuildFile; productRef = E5B610C12ECC9B1D00FE6D54 /* FirebaseAI */; };
-		E5B610C42ECC9B1D00FE6D54 /* FirebaseAILogic in Frameworks */ = {isa = PBXBuildFile; productRef = E5B610C32ECC9B1D00FE6D54 /* FirebaseAILogic */; };
-		E5B610C62ECC9B1D00FE6D54 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = E5B610C52ECC9B1D00FE6D54 /* FirebaseAnalytics */; };
-		E5B610C82ECC9B1D00FE6D54 /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = E5B610C72ECC9B1D00FE6D54 /* FirebaseAnalyticsCore */; };
-		E5B610CA2ECC9B1D00FE6D54 /* FirebaseAnalyticsIdentitySupport in Frameworks */ = {isa = PBXBuildFile; productRef = E5B610C92ECC9B1D00FE6D54 /* FirebaseAnalyticsIdentitySupport */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -43,7 +38,6 @@
 
 /* Begin PBXFileReference section */
 		E54E5A902EBA259A00BD1671 /* NotiFeeder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NotiFeeder.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		E590BE792F436B4C000F2FDC /* NotiFeeder AW.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "NotiFeeder AW.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		E59D296B2F30B4C000099C61 /* NotiFeeder WidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = "NotiFeeder WidgetExtension.appex"; sourceTree = BUILT_PRODUCTS_DIR; };
 		E59D296D2F30B4C000099C61 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		E59D296F2F30B4C000099C61 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
@@ -51,13 +45,6 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		E590BE822F436B4C000F2FDC /* Exceptions for "NotiFeeder AW" folder in "NotiFeeder AW" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = E590BE782F436B4C000F2FDC /* NotiFeeder AW */;
-		};
 		E59D29832F30B4C100099C61 /* Exceptions for "NotiFeeder Widget" folder in "NotiFeeder WidgetExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -85,9 +72,6 @@
 		};
 		E590BE7A2F436B4C000F2FDC /* NotiFeeder AW */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				E590BE822F436B4C000F2FDC /* Exceptions for "NotiFeeder AW" folder in "NotiFeeder AW" target */,
-			);
 			path = "NotiFeeder AW";
 			sourceTree = "<group>";
 		};
@@ -108,18 +92,6 @@
 
 /* Begin PBXFrameworksBuildPhase section */
 		E54E5A8D2EBA259A00BD1671 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				E5B610C42ECC9B1D00FE6D54 /* FirebaseAILogic in Frameworks */,
-				E5B610CA2ECC9B1D00FE6D54 /* FirebaseAnalyticsIdentitySupport in Frameworks */,
-				E5B610C22ECC9B1D00FE6D54 /* FirebaseAI in Frameworks */,
-				E5B610C62ECC9B1D00FE6D54 /* FirebaseAnalytics in Frameworks */,
-				E5B610C82ECC9B1D00FE6D54 /* FirebaseAnalyticsCore in Frameworks */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		E590BE762F436B4C000F2FDC /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -156,7 +128,6 @@
 			children = (
 				E54E5A902EBA259A00BD1671 /* NotiFeeder.app */,
 				E59D296B2F30B4C000099C61 /* NotiFeeder WidgetExtension.appex */,
-				E590BE792F436B4C000F2FDC /* NotiFeeder AW.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -193,36 +164,9 @@
 			);
 			name = NotiFeeder;
 			packageProductDependencies = (
-				E5B610C12ECC9B1D00FE6D54 /* FirebaseAI */,
-				E5B610C32ECC9B1D00FE6D54 /* FirebaseAILogic */,
-				E5B610C52ECC9B1D00FE6D54 /* FirebaseAnalytics */,
-				E5B610C72ECC9B1D00FE6D54 /* FirebaseAnalyticsCore */,
-				E5B610C92ECC9B1D00FE6D54 /* FirebaseAnalyticsIdentitySupport */,
 			);
 			productName = NotiFeeder;
 			productReference = E54E5A902EBA259A00BD1671 /* NotiFeeder.app */;
-			productType = "com.apple.product-type.application";
-		};
-		E590BE782F436B4C000F2FDC /* NotiFeeder AW */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = E590BE832F436B4C000F2FDC /* Build configuration list for PBXNativeTarget "NotiFeeder AW" */;
-			buildPhases = (
-				E590BE752F436B4C000F2FDC /* Sources */,
-				E590BE762F436B4C000F2FDC /* Frameworks */,
-				E590BE772F436B4C000F2FDC /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				E590BE7A2F436B4C000F2FDC /* NotiFeeder AW */,
-			);
-			name = "NotiFeeder AW";
-			packageProductDependencies = (
-			);
-			productName = "NotiFeeder AW";
-			productReference = E590BE792F436B4C000F2FDC /* NotiFeeder AW.app */;
 			productType = "com.apple.product-type.application";
 		};
 		E59D296A2F30B4C000099C61 /* NotiFeeder WidgetExtension */ = {
@@ -261,9 +205,6 @@
 					E54E5A8F2EBA259A00BD1671 = {
 						CreatedOnToolsVersion = 26.0.1;
 					};
-					E590BE782F436B4C000F2FDC = {
-						CreatedOnToolsVersion = 26.2;
-					};
 					E59D296A2F30B4C000099C61 = {
 						CreatedOnToolsVersion = 26.2;
 					};
@@ -279,7 +220,6 @@
 			mainGroup = E54E5A872EBA259A00BD1671;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				E5B610C02ECC9B1D00FE6D54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E54E5A912EBA259A00BD1671 /* Products */;
@@ -288,20 +228,12 @@
 			targets = (
 				E54E5A8F2EBA259A00BD1671 /* NotiFeeder */,
 				E59D296A2F30B4C000099C61 /* NotiFeeder WidgetExtension */,
-				E590BE782F436B4C000F2FDC /* NotiFeeder AW */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		E54E5A8E2EBA259A00BD1671 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		E590BE772F436B4C000F2FDC /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -319,13 +251,6 @@
 
 /* Begin PBXSourcesBuildPhase section */
 		E54E5A8C2EBA259A00BD1671 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		E590BE752F436B4C000F2FDC /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -543,68 +468,6 @@
 			};
 			name = Release;
 		};
-		E590BE802F436B4C000F2FDC /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 8W4U9DBYVS;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "NotiFeeder AW/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "NotiFeeder AW";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-					"@executable_path/../../../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "DyonisosFergadiotis.NotiFeeder-AW";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				SKIP_INSTALL = NO;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 26.0;
-			};
-			name = Debug;
-		};
-		E590BE812F436B4C000F2FDC /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 8W4U9DBYVS;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "NotiFeeder AW/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "NotiFeeder AW";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-					"@executable_path/../../../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "DyonisosFergadiotis.NotiFeeder-AW";
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = watchos;
-				SKIP_INSTALL = NO;
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_APPROACHABLE_CONCURRENCY = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 4;
-				WATCHOS_DEPLOYMENT_TARGET = 26.0;
-			};
-			name = Release;
-		};
 		E59D29812F30B4C100099C61 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -690,15 +553,6 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		E590BE832F436B4C000F2FDC /* Build configuration list for PBXNativeTarget "NotiFeeder AW" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				E590BE802F436B4C000F2FDC /* Debug */,
-				E590BE812F436B4C000F2FDC /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		E59D29802F30B4C100099C61 /* Build configuration list for PBXNativeTarget "NotiFeeder WidgetExtension" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -709,45 +563,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		E5B610C02ECC9B1D00FE6D54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 12.6.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		E5B610C12ECC9B1D00FE6D54 /* FirebaseAI */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E5B610C02ECC9B1D00FE6D54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAI;
-		};
-		E5B610C32ECC9B1D00FE6D54 /* FirebaseAILogic */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E5B610C02ECC9B1D00FE6D54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAILogic;
-		};
-		E5B610C52ECC9B1D00FE6D54 /* FirebaseAnalytics */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E5B610C02ECC9B1D00FE6D54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAnalytics;
-		};
-		E5B610C72ECC9B1D00FE6D54 /* FirebaseAnalyticsCore */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E5B610C02ECC9B1D00FE6D54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAnalyticsCore;
-		};
-		E5B610C92ECC9B1D00FE6D54 /* FirebaseAnalyticsIdentitySupport */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E5B610C02ECC9B1D00FE6D54 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAnalyticsIdentitySupport;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E54E5A882EBA259A00BD1671 /* Project object */;
 }

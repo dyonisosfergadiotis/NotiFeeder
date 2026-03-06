@@ -4,6 +4,10 @@ enum FeedStorage {
     enum Keys {
         static let savedFeeds = "savedFeeds"
         static let cachedEntries = "cachedEntries"
+        static let feedColorMap = "feedColorMap"
+        static let savedArticles = "savedArticles"
+        static let readArticleIDs = "readArticleIDs"
+        static let bookmarkedArticleIDs = "bookmarkedArticleIDs"
     }
 
     static let suiteName = "group.notiFeeder"
@@ -16,26 +20,34 @@ enum FeedStorage {
         let groupDefaults = defaults
         let standard = UserDefaults.standard
 
-        let hasGroupValue = groupDefaults.object(forKey: Keys.savedFeeds) != nil
-        let hasStandardValue = standard.object(forKey: Keys.savedFeeds) != nil
+        let keysToMigrate = [
+            Keys.savedFeeds,
+            Keys.cachedEntries,
+            Keys.feedColorMap,
+            Keys.savedArticles,
+            Keys.readArticleIDs,
+            Keys.bookmarkedArticleIDs
+        ]
 
-        guard !hasGroupValue, hasStandardValue else { return }
-
-        if let data = standard.data(forKey: Keys.savedFeeds) {
-            groupDefaults.set(data, forKey: Keys.savedFeeds)
+        for key in keysToMigrate {
+            let hasGroupValue = groupDefaults.object(forKey: key) != nil
+            let hasStandardValue = standard.object(forKey: key) != nil
+            guard !hasGroupValue, hasStandardValue else { continue }
+            groupDefaults.set(standard.object(forKey: key), forKey: key)
         }
     }
 }
 
 enum FeedCacheSync {
-    private static let syncTokenSuffix = ".syncToken"
+    static let syncTokenSuffix = ".syncToken"
 
-    private static func syncTokenKey(for key: String) -> String {
+    static func syncTokenKey(for key: String) -> String {
         "\(key)\(syncTokenSuffix)"
     }
 
-    static func write(_ data: Data, for key: String) {
-        let timestamp = Date().timeIntervalSince1970
+    @discardableResult
+    static func write(_ data: Data, for key: String, token: Double? = nil) -> Double {
+        let timestamp = token ?? Date().timeIntervalSince1970
         let groupDefaults = FeedStorage.defaults
         let standardDefaults = UserDefaults.standard
 
@@ -44,6 +56,13 @@ enum FeedCacheSync {
 
         groupDefaults.set(timestamp, forKey: syncTokenKey(for: key))
         standardDefaults.set(timestamp, forKey: syncTokenKey(for: key))
+        return timestamp
+    }
+
+    static func bestAvailableToken(for key: String) -> Double {
+        let groupToken = FeedStorage.defaults.double(forKey: syncTokenKey(for: key))
+        let standardToken = UserDefaults.standard.double(forKey: syncTokenKey(for: key))
+        return max(groupToken, standardToken)
     }
 
     static func bestAvailableData(for key: String) -> Data? {

@@ -25,14 +25,13 @@ final class ArticleStore: ObservableObject {
     // Persisted keys
     private let articlesKey = FeedStorage.Keys.savedArticles
     private let readKey = FeedStorage.Keys.readArticleIDs
+    private let recentlyReadKey = "recentlyReadArticleIDs"
     private let maxArticlesPerFeed = 100
 
     // In-memory cache
     @Published private(set) var articlesByFeed: [String: [StoredFeedArticle]] = [:] // key: feed URL
     @Published private(set) var readArticleIDs: Set<String> = []
-
-    // In-memory short-term cache for recently read articles (not persisted)
-    private(set) var recentlyReadArticleIDs: Set<String> = []
+    @Published private(set) var recentlyReadArticleIDs: Set<String> = []
 
     private let defaults: UserDefaults
     private let encoder = JSONEncoder()
@@ -46,6 +45,7 @@ final class ArticleStore: ObservableObject {
         encoder.dateEncodingStrategy = .iso8601
         observeCloudSync()
         loadFromDisk()
+        promoteRecentlyReadFromPreviousSession()
     }
 
     deinit {
@@ -70,6 +70,12 @@ final class ArticleStore: ObservableObject {
         } else {
             readArticleIDs = []
         }
+        if let data = FeedCacheSync.bestAvailableData(for: recentlyReadKey) ?? defaults.data(forKey: recentlyReadKey),
+           let loaded = try? decoder.decode([String].self, from: data) {
+            recentlyReadArticleIDs = Set(loaded)
+        } else {
+            recentlyReadArticleIDs = []
+        }
     }
 
     private func saveArticlesToDisk() {
@@ -78,9 +84,6 @@ final class ArticleStore: ObservableObject {
             guard let self = self else { return }
             if let data = try? self.encoder.encode(snapshot) {
                 _ = FeedCacheSync.write(data, for: self.articlesKey)
-                Task { @MainActor in
-                    FeedICloudSyncManager.shared.pushLocalData(data, for: self.articlesKey)
-                }
             }
         }
     }
@@ -96,6 +99,25 @@ final class ArticleStore: ObservableObject {
                 }
             }
         }
+    }
+
+    private func saveRecentlyReadStateToDisk() {
+        let array = Array(recentlyReadArticleIDs)
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            if let data = try? self.encoder.encode(array) {
+                _ = FeedCacheSync.write(data, for: self.recentlyReadKey)
+            }
+        }
+    }
+
+    private func promoteRecentlyReadFromPreviousSession() {
+        guard !recentlyReadArticleIDs.isEmpty else { return }
+
+        readArticleIDs.formUnion(recentlyReadArticleIDs)
+        recentlyReadArticleIDs.removeAll()
+        saveReadStateToDisk()
+        saveRecentlyReadStateToDisk()
     }
 
     // MARK: Public API
@@ -127,7 +149,13 @@ final class ArticleStore: ObservableObject {
     }
 
     func setRead(_ isRead: Bool, articleID: String) {
-        if isRead { readArticleIDs.insert(articleID) } else { readArticleIDs.remove(articleID) }
+        if isRead {
+            readArticleIDs.insert(articleID)
+        } else {
+            readArticleIDs.remove(articleID)
+            recentlyReadArticleIDs.remove(articleID)
+            saveRecentlyReadStateToDisk()
+        }
         saveReadStateToDisk()
     }
 
@@ -135,39 +163,39 @@ final class ArticleStore: ObservableObject {
         readArticleIDs.contains(articleID)
     }
 
-    // MARK: Recently Read Articles (short-term, in-memory only)
-    /// Used for short-term tracking of recently read articles that are not yet persisted as permanently read.
-    /// This set is never saved to disk and resets on app restart.
+    // MARK: Recently Read Articles
+    /// Tracks articles that should continue to appear in the unread flow
+    /// until a real refresh promotes them to permanently read.
     func markRecentlyRead(articleID: String) {
-        guard !readArticleIDs.contains(articleID) else { return }
+        guard !recentlyReadArticleIDs.contains(articleID) else { return }
         recentlyReadArticleIDs.insert(articleID)
+        saveRecentlyReadStateToDisk()
+    }
+
+    func unmarkRecentlyRead(articleID: String) {
+        guard recentlyReadArticleIDs.contains(articleID) else { return }
+        recentlyReadArticleIDs.remove(articleID)
+        saveRecentlyReadStateToDisk()
     }
 
     func clearRecentlyRead() {
+        guard !recentlyReadArticleIDs.isEmpty else { return }
         recentlyReadArticleIDs.removeAll()
+        saveRecentlyReadStateToDisk()
     }
 
     func isRecentlyRead(articleID: String) -> Bool {
-        recentlyReadArticleIDs.contains(articleID) && !readArticleIDs.contains(articleID)
+        recentlyReadArticleIDs.contains(articleID)
     }
 
     @MainActor
     func syncFromCloudIfNeeded() {
-        FeedICloudSyncManager.shared.syncDataFromCloudIfNeeded(for: articlesKey)
         FeedICloudSyncManager.shared.syncDataFromCloudIfNeeded(for: readKey)
         loadFromDisk()
     }
 
     private func observeCloudSync() {
         let center = NotificationCenter.default
-
-        let articlesObserver = center.addObserver(
-            forName: .feedSavedArticlesDidSyncFromICloud,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.loadFromDisk()
-        }
 
         let readObserver = center.addObserver(
             forName: .feedReadArticleIDsDidSyncFromICloud,
@@ -177,6 +205,6 @@ final class ArticleStore: ObservableObject {
             self?.loadFromDisk()
         }
 
-        cloudSyncObservers = [articlesObserver, readObserver]
+        cloudSyncObservers = [readObserver]
     }
 }

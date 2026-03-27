@@ -33,4 +33,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         }
         return true
     }
+
+    func applicationWillEnterForeground(_ application: UIApplication) {
+        Task { @MainActor in
+            FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
+        }
+    }
+
+    func applicationDidBecomeActive(_ application: UIApplication) {
+        Task { @MainActor in
+            FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
+        }
+    }
 }

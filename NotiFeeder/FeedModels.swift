@@ -1,7 +1,6 @@
 import Foundation
-import UIKit
 
-public struct FeedSource: Codable, Hashable, Identifiable {
+nonisolated public struct FeedSource: Codable, Hashable, Identifiable, Sendable {
     public var id: String { url }
     public var title: String
     public var url: String
@@ -22,7 +21,7 @@ public struct FeedSource: Codable, Hashable, Identifiable {
     }
 }
 
-public struct FeedEntry: Identifiable, Hashable, Codable {
+nonisolated public struct FeedEntry: Identifiable, Hashable, Codable, Sendable {
     public var id: String { link }
     public var title: String
     public var shortTitle: String
@@ -60,97 +59,16 @@ public struct FeedEntry: Identifiable, Hashable, Codable {
         self.isRead = isRead
     }
 
-	// --- Neue Hilfs-Properties und Funktionen ---
+    public var parsedPubDate: Date? {
+        let parsed = DateParser.parse(pubDateString)
+        return parsed == .distantPast ? nil : parsed
+    }
 
-	// Liefert eine URL, falls imageURL ein gültiger String ist
-	public var imageURLAsURL: URL? {
-		guard let str = imageURL, let url = URL(string: str) else { return nil }
-		return url
-	}
-
-	// Lokaler Cache-Pfad für das Entry-Bild (basierend auf link.hashValue)
-	public var cachedImageFileURL: URL? {
-		let fileName = "feedentry_image_\(link.hashValue)"
-		let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-		return caches?.appendingPathComponent(fileName)
-	}
-
-	// Prüft ob ein gecachtes Bild existiert und gibt den URL zurück
-	public static func cachedImageFileURL(for entry: FeedEntry) -> URL? {
-		guard let cachedURL = entry.cachedImageFileURL else { return nil }
-		if FileManager.default.fileExists(atPath: cachedURL.path) {
-			return cachedURL
-		}
-		return nil
-	}
-
-	// Lädt Bild asynchron und speichert es im Cache (falls möglich)
-	// Rückgabe: UIImage? oder nil bei Fehler
-	public static func downloadAndCacheImage(for entry: FeedEntry) async -> UIImage? {
-		guard let imgURL = entry.imageURLAsURL else { return nil }
-		do {
-			let (data, _) = try await URLSession.shared.data(from: imgURL)
-			guard let image = UIImage(data: data) else { return nil }
-			if let cachedURL = entry.cachedImageFileURL {
-				// Versuche zu schreiben, Fehler ignorieren
-				try? data.write(to: cachedURL)
-			}
-			return image
-		} catch {
-			return nil
-		}
-	}
-
-	// Versucht pubDateString in ein Date zu parsen (unterstützt mehrere Formate)
-	public var parsedPubDate: Date? {
-		guard let s = pubDateString, !s.isEmpty else { return nil }
-
-		// versuche RFC1123 / RFC822 Formate
-		let rfcFormatter = DateFormatter()
-		rfcFormatter.locale = Locale(identifier: "en_US_POSIX")
-		rfcFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-
-		let formats = [
-			"EEE, dd MMM yyyy HH:mm:ss zzz",
-			"EEE, dd MMM yyyy HH:mm:ss Z",
-			"dd MMM yyyy HH:mm:ss zzz",
-			"yyyy-MM-dd'T'HH:mm:ssZ", // ISO8601-like
-			"yyyy-MM-dd'T'HH:mm:ss.SSSZ"
-		]
-
-		for f in formats {
-			rfcFormatter.dateFormat = f
-			if let d = rfcFormatter.date(from: s) {
-				return d
-			}
-		}
-
-		// Fallback: ISO8601DateFormatter
-		if #available(iOS 10.0, *) {
-			let iso = ISO8601DateFormatter()
-			if let d = iso.date(from: s) {
-				return d
-			}
-		}
-
-		return nil
-	}
-
-	// Formatiertes Datum für Anzeige (z.B. in Listen)
-	public var formattedPubDate: String? {
-		guard let date = parsedPubDate else { return nil }
-		let df = DateFormatter()
-		df.locale = Locale(identifier: "de_DE")
-		df.dateStyle = .medium
-		df.timeStyle = .short
-		return df.string(from: date)
-	}
-
-	// Nutzbarer Anzeige-Titel (shortTitle fällt zurück auf title)
-	public var displayTitle: String {
-		let t = shortTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-		return t.isEmpty ? title : t
-	}
+    // Nutzbarer Anzeige-Titel (shortTitle fällt zurück auf title)
+    public var displayTitle: String {
+        let t = shortTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? title : t
+    }
 
     // Deep link for widgets and external launches.
     public var deepLinkURL: URL? {

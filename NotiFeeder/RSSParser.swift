@@ -1,14 +1,21 @@
 import Foundation
 import OSLog
 
-enum RSSParserError: Error, Equatable {
+nonisolated enum RSSParserError: Error, Equatable, Sendable {
     case invalidEncoding
     case invalidSanitizedData
     case xmlParsingFailed
     case emptyItems
 }
 
-class RSSParser: NSObject, XMLParserDelegate {
+nonisolated final class RSSParser: NSObject, XMLParserDelegate {
+    private static let imageSourceRegex: NSRegularExpression? = {
+        try? NSRegularExpression(
+            pattern: "<img[^>]+src\\s*=\\s*['\"]([^'\"]+)['\"][^>]*>",
+            options: .caseInsensitive
+        )
+    }()
+
     private var entries: [FeedEntry] = []
     private var currentTitle = ""
     private var currentLink = ""
@@ -87,7 +94,7 @@ class RSSParser: NSObject, XMLParserDelegate {
             // Falls kein Bild direkt angegeben ist, versuche es aus <img src="..."> herauszulesen
             let rawDescription = currentDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             if currentImageURL.isEmpty {
-                if let regex = try? NSRegularExpression(pattern: "<img[^>]+src\\s*=\\s*['\"]([^'\"]+)['\"][^>]*>", options: .caseInsensitive) {
+                if let regex = Self.imageSourceRegex {
                     let range = NSRange(location: 0, length: rawDescription.utf16.count)
                     if let match = regex.firstMatch(in: rawDescription, options: [], range: range),
                        let imgRange = Range(match.range(at: 1), in: rawDescription) {

@@ -248,31 +248,38 @@ private struct WidgetFeedEntryCache: Codable {
 }
 
 private extension Date {
+    private static let rssISO8601Formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let rssRFC822Formatters: [DateFormatter] = [
+        "EEE, dd MMM yyyy HH:mm:ss zzz",
+        "dd MMM yyyy HH:mm:ss zzz",
+        "EEE, dd MMM yyyy HH:mm zzz",
+        "dd MMM yyyy HH:mm zzz"
+    ].map { format in
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = format
+        return formatter
+    }
+
     /// Parses pubDateString with minimal logic (ISO8601 and RFC822)
     init?(rssDateString: String) {
-        // Try ISO8601
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = isoFormatter.date(from: rssDateString) {
+        if let date = Self.rssISO8601Formatter.date(from: rssDateString) {
             self = date
             return
         }
-        // Try RFC822 formats
-        let rfc822Formats = [
-            "EEE, dd MMM yyyy HH:mm:ss zzz",
-            "dd MMM yyyy HH:mm:ss zzz",
-            "EEE, dd MMM yyyy HH:mm zzz",
-            "dd MMM yyyy HH:mm zzz"
-        ]
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        for format in rfc822Formats {
-            formatter.dateFormat = format
+
+        for formatter in Self.rssRFC822Formatters {
             if let date = formatter.date(from: rssDateString) {
                 self = date
                 return
             }
         }
+
         return nil
     }
 }
@@ -311,9 +318,20 @@ private struct WidgetCore {
             cachedEntries = decoded
         }
 
+        var parsedDateByString: [String: Date] = [:]
+        parsedDateByString.reserveCapacity(cachedEntries.count)
+        func parsedDate(for dateString: String) -> Date {
+            if let cached = parsedDateByString[dateString] {
+                return cached
+            }
+            let parsed = Date(rssDateString: dateString) ?? .distantPast
+            parsedDateByString[dateString] = parsed
+            return parsed
+        }
+
         let sorted = cachedEntries.sorted { lhs, rhs in
-            let ld = Date(rssDateString: lhs.pubDateString) ?? .distantPast
-            let rd = Date(rssDateString: rhs.pubDateString) ?? .distantPast
+            let ld = parsedDate(for: lhs.pubDateString)
+            let rd = parsedDate(for: rhs.pubDateString)
             return ld > rd
         }
 
@@ -331,7 +349,10 @@ private struct WidgetCore {
         let backgroundImage = WidgetAppearance.isTransparentEnabled() ? loadBackgroundImage(for: family, position: position) : nil
 
         var items: [WidgetUnreadItem] = selected.map { entry in
-            let date = Date(rssDateString: entry.pubDateString) ?? Date()
+            let date = {
+                let parsed = parsedDate(for: entry.pubDateString)
+                return parsed == .distantPast ? Date() : parsed
+            }()
             let url: URL?
             if family == .systemSmall {
                 url = nil
@@ -451,7 +472,7 @@ private struct WidgetCropper {
     }
 
     static func layout(for size: CGSize, iconSizeMode: String) -> Layout {
-        let base = baseValues(iconSizeMode: iconSizeMode)
+        let base = baseValues(iconSizeMode: iconSizeMode, screenPixels: size)
         let heightKey = Int(size.height.rounded())
         if let exact = base[heightKey] {
             return Layout(
@@ -510,7 +531,7 @@ private struct WidgetCropper {
         // Start with a sensible default for modern iPhones with notch
         var initial: CGFloat = 0.245
 
-        let base = baseValues(iconSizeMode: iconSizeMode)
+        let base = baseValues(iconSizeMode: iconSizeMode, screenPixels: screenPixels)
         let targetHeight = Int(screenPixels.height.rounded())
         let nearestHeight = base.keys.min { abs($0 - targetHeight) < abs($1 - targetHeight) }
 
@@ -546,7 +567,7 @@ private struct WidgetCropper {
 
     static func dynamicLayout(for screenPixels: CGSize, iconSizeMode: String) -> Layout? {
         let cache = WidgetSizeCache.load()
-        let screenPoints = UIScreen.main.bounds.size
+        guard let screenPoints = screenPointSize(for: screenPixels) else { return nil }
         let screenWidth = min(screenPoints.width, screenPoints.height)
         let screenHeight = max(screenPoints.width, screenPoints.height)
         guard screenWidth > 0, screenHeight > 0 else { return nil }
@@ -619,7 +640,7 @@ private struct WidgetCropper {
         let totalMarginPt = max(0, screenHeight - gridHeightPt)
 
         // Try to derive top margin directly from the closest base profile
-        let base = baseValues(iconSizeMode: iconSizeMode)
+        let base = baseValues(iconSizeMode: iconSizeMode, screenPixels: screenPixels)
         let targetHeight = Int(screenPixels.height.rounded())
         let nearestHeight = base.keys.min { abs($0 - targetHeight) < abs($1 - targetHeight) }
 
@@ -752,7 +773,7 @@ private struct WidgetCropper {
         return rect.intersection(bounds)
     }
 
-    private static func baseValues(iconSizeMode: String) -> [Int: BaseValues] {
+    private static func baseValues(iconSizeMode: String, screenPixels: CGSize) -> [Int: BaseValues] {
         let useNoText = (iconSizeMode == WidgetAppearance.iconSizeLarge)
 
         let v2868Text = BaseValues(small: 510, medium: 1092, large: 1146, left: 114, right: 696, top: 276, middle: 912, bottom: 1548)
@@ -798,7 +819,7 @@ private struct WidgetCropper {
         ]
 
         #if canImport(UIKit)
-        let screenPoints = UIScreen.main.bounds.size
+        let screenPoints = screenPointSize(for: screenPixels) ?? .zero
         let screenWidth = min(screenPoints.width, screenPoints.height)
         let isMini = screenWidth <= 360
         values[2436] = isMini ? v2436Mini : v2436X
@@ -808,6 +829,14 @@ private struct WidgetCropper {
 
         return values
     }
+
+    #if canImport(UIKit)
+    private static func screenPointSize(for screenPixels: CGSize) -> CGSize? {
+        let scale = UITraitCollection.current.displayScale
+        guard scale > 0 else { return nil }
+        return CGSize(width: screenPixels.width / scale, height: screenPixels.height / scale)
+    }
+    #endif
 }
 
 struct SmallWidgetProvider: AppIntentTimelineProvider {

@@ -88,6 +88,7 @@ struct ReaderSettingsPanel: View {
                             Text("Blocksatz").tag("justified")
                         }
                         .pickerStyle(.segmented)
+                        .tint(.accentColor)
                         
                         // Helper description
                     }

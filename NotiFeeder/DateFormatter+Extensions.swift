@@ -3,7 +3,7 @@ import OSLog
 
 // MARK: - DateFormatter Extension (Formatter Definitions)
 
-extension DateFormatter {
+nonisolated extension DateFormatter {
     private static let germanLocale = Locale(identifier: "de_DE")
 
     /// RFC 822 with four-digit year, e.g. "Tue, 25 Nov 2025 12:34:56 GMT"
@@ -55,7 +55,7 @@ extension DateFormatter {
 
 // MARK: - ISO8601 helpers
 
-private extension ISO8601DateFormatter {
+nonisolated private extension ISO8601DateFormatter {
     static let full: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -77,13 +77,20 @@ private extension ISO8601DateFormatter {
 
 // MARK: - DateParser (Intelligente Parsing-Logik)
 
-struct DateParser {
-    private static func normalizeRFC822TwoDigitYear(_ input: String) -> String {
-        // Match: Weekday, dd MMM yy HH:mm:ss ZZZ (captures the two-digit year as group 1)
-        // We conservatively look for a space + two digits + space between month and time.
-        // Example: "Tue, 25 Nov 25 12:34:56 GMT" -> "Tue, 25 Nov 2025 12:34:56 GMT"
+nonisolated struct DateParser {
+    private static let parseCache: NSCache<NSString, NSDate> = {
+        let cache = NSCache<NSString, NSDate>()
+        cache.countLimit = 2048
+        return cache
+    }()
+
+    private static let rfc822TwoDigitYearRegex: NSRegularExpression? = {
         let pattern = "^(Mon|Tue|Wed|Thu|Fri|Sat|Sun),\\s\\d{2}\\s(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\\s(\\d{2})(\\s\\d{2}:\\d{2}:\\d{2}\\s[A-Za-z+\\-0-9:]+)$"
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+        return try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+    }()
+
+    private static func normalizeRFC822TwoDigitYear(_ input: String) -> String {
+        guard let regex = rfc822TwoDigitYearRegex else {
             return input
         }
         let range = NSRange(location: 0, length: (input as NSString).length)
@@ -105,15 +112,28 @@ struct DateParser {
             return Date.distantPast
         }
 
+        let cacheKey = s as NSString
+        if let cached = parseCache.object(forKey: cacheKey) {
+            return cached as Date
+        }
+
+        let parsed: Date
+
         // 1) ISO8601 Varianten
         if let d = ISO8601DateFormatter.full.date(from: s) {
-            return d
+            parsed = d
+            parseCache.setObject(parsed as NSDate, forKey: cacheKey)
+            return parsed
         }
         if let d = ISO8601DateFormatter.internet.date(from: s) {
-            return d
+            parsed = d
+            parseCache.setObject(parsed as NSDate, forKey: cacheKey)
+            return parsed
         }
         if let d = ISO8601DateFormatter.dateTimeNoZ.date(from: s) {
-            return d
+            parsed = d
+            parseCache.setObject(parsed as NSDate, forKey: cacheKey)
+            return parsed
         }
 
         // Normalize RFC822 with two-digit year to four-digit (prefix "20") before parsing
@@ -121,16 +141,22 @@ struct DateParser {
 
         // 2) RFC822 (first try normalized yyyy)
         if let d = DateFormatter.rfc822YYYY.date(from: normalizedRFC822) {
-            return d
+            parsed = d
+            parseCache.setObject(parsed as NSDate, forKey: cacheKey)
+            return parsed
         }
 
         // 3) RFC822 with two-digit year as a safety net
         if let d = DateFormatter.rfc822YY.date(from: s) {
-            return d
+            parsed = d
+            parseCache.setObject(parsed as NSDate, forKey: cacheKey)
+            return parsed
         }
 
         // 4) Fallback
         AppLogger.parsing.warning("Date parsing failed for input: \(s, privacy: .public)")
-        return Date.distantPast
+        parsed = Date.distantPast
+        parseCache.setObject(parsed as NSDate, forKey: cacheKey)
+        return parsed
     }
 }

@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-enum AppLogger {
+nonisolated enum AppLogger {
     static let subsystem = Bundle.main.bundleIdentifier ?? "de.dyonisos.NotiFeeder"
     static let app = Logger(subsystem: subsystem, category: "app")
     static let network = Logger(subsystem: subsystem, category: "network")

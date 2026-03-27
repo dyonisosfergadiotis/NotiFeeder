@@ -1,7 +1,7 @@
 import Foundation
 
 enum HTMLText {
-    static func stripHTML(_ html: String) -> String {
+    nonisolated static func stripHTML(_ html: String) -> String {
         var text = decodeHTMLEntities(in: html)
             // Strip tags after decoding.
             .replacingOccurrences(of: "<script[\\s\\S]*?</script>", with: "", options: .regularExpression)
@@ -12,7 +12,7 @@ enum HTMLText {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func decodeHTMLEntities(in input: String) -> String {
+    nonisolated private static func decodeHTMLEntities(in input: String) -> String {
         var text = input
             .replacingOccurrences(of: "&nbsp;", with: " ")
             .replacingOccurrences(of: "&amp;", with: "&")

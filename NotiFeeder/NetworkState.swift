@@ -11,11 +11,12 @@ import Combine
 import SwiftUI
 import OSLog
 
+@MainActor
 final class NetworkState: ObservableObject {
     @Published var isOffline = false
 }
 
-enum FeedFetchError: Error, Equatable {
+nonisolated enum FeedFetchError: Error, Equatable, Sendable {
     case invalidURL
     case offline
     case timeout
@@ -24,7 +25,7 @@ enum FeedFetchError: Error, Equatable {
     case network
 }
 
-struct FeedFetchStatus: Equatable {
+nonisolated struct FeedFetchStatus: Equatable, Sendable {
     let entries: [FeedEntry]
     let error: FeedFetchError?
     let attempts: Int
@@ -50,8 +51,10 @@ actor FeedNetworkClient {
     }
 
     func fetch(feed: FeedSource) async -> FeedFetchStatus {
+        let feedID = feed.id
+
         guard let url = URL(string: feed.url) else {
-            AppLogger.network.error("Invalid feed URL for feed id \(feed.id, privacy: .public)")
+            AppLogger.network.error("Invalid feed URL for feed id \(feedID, privacy: .public)")
             return .failure(.invalidURL, attempts: 1)
         }
 
@@ -64,12 +67,12 @@ actor FeedNetworkClient {
             switch result {
             case .success(let entries):
                 if attempt > 1 {
-                    AppLogger.network.info("Feed recovered after retry. feed=\(feed.id, privacy: .public) attempts=\(attempt)")
+                    AppLogger.network.info("Feed recovered after retry. feed=\(feedID, privacy: .public) attempts=\(attempt)")
                 }
                 return .success(entries, attempts: attempt)
             case .failure(let error):
                 lastError = error
-                AppLogger.network.warning("Feed fetch failed. feed=\(feed.id, privacy: .public) attempt=\(attempt) error=\(String(describing: error), privacy: .public)")
+                AppLogger.network.warning("Feed fetch failed. feed=\(feedID, privacy: .public) attempt=\(attempt) error=\(String(describing: error), privacy: .public)")
                 if !shouldRetry(for: error, attempt: attempt) {
                     return .failure(error, attempts: attempt)
                 }

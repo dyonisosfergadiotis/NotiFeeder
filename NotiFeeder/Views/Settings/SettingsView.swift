@@ -28,31 +28,23 @@ struct SettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(UserProfileStore.displayNameKey) private var profileDisplayName: String = ""
     @AppStorage("ui.cards.previewLines") private var previewLines: Int = 3
+    @AppStorage("ui.cards.style.fullColor") private var fullColorCards: Bool = false
 
     var body: some View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 20) {
                     profileSection
 
                     settingsSection(title: "Inhalte") {
                         SettingsNavigationRow(
                             icon: "dot.radiowaves.left.and.right",
                             iconTint: theme.uiAccentColor,
-                            title: "Feeds",
+                            title: "Feeds verwalten",
                             subtitle: feedsSubtitle
                         ) {
                             FeedsSettingsViewPlaceholder()
                                 .environmentObject(theme)
-                        }
-                        sectionDivider
-                        SettingsNavigationRow(
-                            icon: "line.3.horizontal.decrease.circle",
-                            iconTint: theme.uiAccentColor,
-                            title: "Filter",
-                            subtitle: "Ungelesen & Listenansicht"
-                        ) {
-                            FeedBehaviorSettingsView()
                         }
                     }
 
@@ -60,38 +52,36 @@ struct SettingsView: View {
                         SettingsNavigationRow(
                             icon: "paintpalette",
                             iconTint: theme.uiAccentColor,
-                            title: "Kacheln",
-                            subtitle: "\(previewLines) Zeilen · Kartenstil"
+                            title: "Karten & Layout",
+                            subtitle: cardsSubtitle
                         ) {
                             PersonalizationViewPlaceholder()
                         }
-                    }
-
-                    settingsSection(title: "Widgets") {
+                        sectionDivider
                         SettingsNavigationRow(
                             icon: "square.grid.2x2",
                             iconTint: theme.uiAccentColor,
-                            title: "Hintergrund",
-                            subtitle: "Transparenz & Position"
+                            title: "Widgets",
+                            subtitle: "Homescreen-Hintergrund & Transparenz"
                         ) {
                             WidgetSettingsView()
                                 .environmentObject(theme)
                         }
                     }
 
-                    settingsSection(title: "Info") {
+                    settingsSection(title: "App") {
                         SettingsNavigationRow(
                             icon: "info.circle",
                             iconTint: theme.uiAccentColor,
-                            title: "Über App & Dev",
+                            title: "App & Info",
                             subtitle: appVersionString
                         ) {
                             InfoViewPlaceholder()
                         }
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 18)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
             }
             .sheetCornerAlignedScrollContent()
             .scrollContentBackground(.hidden)
@@ -100,6 +90,18 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.large)
         }
         .tint(theme.uiAccentColor)
+        .onChange(of: profileDisplayName) { _, newValue in
+            FeedICloudSyncManager.shared.pushLocalPreferenceValue(
+                UserProfileStore.sanitizedDisplayName(newValue),
+                for: FeedStorage.Keys.profileDisplayName
+            )
+        }
+        .onChange(of: previewLines) { _, newValue in
+            FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.uiCardsPreviewLines)
+        }
+        .onChange(of: fullColorCards) { _, newValue in
+            FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.uiCardsStyleFullColor)
+        }
     }
 
     private var displayName: String {
@@ -111,6 +113,18 @@ struct SettingsView: View {
         feeds.count == 1 ? "1 Feed gespeichert" : "\(feeds.count) Feeds gespeichert"
     }
 
+    private var cardsSubtitle: String {
+        "\(previewSummary) · \(cardStyleSummary)"
+    }
+
+    private var previewSummary: String {
+        previewLines == 0 ? "Nur Titel" : "\(previewLines) Zeilen Vorschau"
+    }
+
+    private var cardStyleSummary: String {
+        fullColorCards ? "Farbige Karten" : "Dezente Karten"
+    }
+
     private var appVersionString: String {
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "-"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "-"
@@ -120,7 +134,7 @@ struct SettingsView: View {
     private var profileSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Profil")
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .appSectionLabel()
                 .foregroundStyle(sectionHeadingColor)
                 .padding(.leading, 6)
 
@@ -131,11 +145,11 @@ struct SettingsView: View {
                     ProfileAvatarBadge(name: displayName, size: 52)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(displayName)
-                            .font(.system(size: 21, weight: .semibold, design: .rounded))
+                            .appTitle()
                             .foregroundStyle(primaryTextColor)
                             .lineLimit(1)
                         Text("Profilbild & Name")
-                            .font(.system(size: 16, weight: .medium, design: .rounded))
+                            .appSecondary()
                             .foregroundStyle(secondaryTextColor)
                     }
                     Spacer(minLength: 0)
@@ -160,7 +174,7 @@ struct SettingsView: View {
     private func settingsSection<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .appSectionLabel()
                 .foregroundStyle(sectionHeadingColor)
                 .padding(.leading, 6)
 
@@ -178,29 +192,29 @@ struct SettingsView: View {
 
     private var sectionDivider: some View {
         Rectangle()
-            .fill(colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.10))
-            .frame(height: 1)
+            .fill(Color(uiColor: .separator).opacity(colorScheme == .dark ? 0.42 : 0.65))
+            .frame(height: 0.6)
             .padding(.leading, 56)
             .padding(.trailing, 14)
     }
 
     private var cardShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 26, style: .continuous)
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
     }
 
     private var cardBorder: some View {
         cardShape
-            .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.08), lineWidth: 1)
+            .stroke(Color(uiColor: .separator).opacity(colorScheme == .dark ? 0.30 : 0.32), lineWidth: 0.8)
     }
 
     private var cardBackground: some View {
         cardShape
-            .fill(colorScheme == .dark ? Color.black.opacity(0.33) : Color.white.opacity(0.72))
+            .fill(colorScheme == .dark ? Color(uiColor: .secondarySystemGroupedBackground) : Color(uiColor: .systemBackground))
             .overlay {
                 cardShape.fill(
                     LinearGradient(
                         colors: [
-                            theme.uiAccentColor.opacity(colorScheme == .dark ? 0.15 : 0.10),
+                            theme.uiAccentColor.opacity(colorScheme == .dark ? 0.08 : 0.04),
                             .clear
                         ],
                         startPoint: .topLeading,
@@ -211,7 +225,7 @@ struct SettingsView: View {
     }
 
     private var sectionHeadingColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.86) : Color.primary.opacity(0.82)
+        colorScheme == .dark ? Color.white.opacity(0.74) : Color.secondary.opacity(0.92)
     }
 
     private var primaryTextColor: Color {
@@ -228,21 +242,18 @@ struct SettingsView: View {
 
     private var backgroundGradient: some View {
         ZStack {
+            Color(uiColor: colorScheme == .dark ? .black : .systemGroupedBackground)
+
             LinearGradient(
                 colors: UIStylePolicy.accentBackgroundColors(accent: theme.uiAccentColor, colorScheme: colorScheme),
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
+            .opacity(colorScheme == .dark ? 0.18 : 0.10)
 
-            LinearGradient(
-                colors: [
-                    theme.uiAccentColor.opacity(colorScheme == .dark ? 0.08 : 0.06),
-                    .clear,
-                    colorScheme == .dark ? Color.black.opacity(0.16) : Color.white.opacity(0.22)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(colorScheme == .dark ? 0.06 : 0.08)
         }
     }
 }
@@ -339,20 +350,20 @@ private struct SettingsNavigationRow<Destination: View>: View {
         } label: {
             HStack(spacing: 12) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(iconTint.opacity(colorScheme == .dark ? 0.24 : 0.16))
-                        .frame(width: 34, height: 34)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(iconTint.opacity(colorScheme == .dark ? 0.16 : 0.10))
+                        .frame(width: 30, height: 30)
                     Image(systemName: icon)
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(iconTint)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 20, weight: .semibold, design: .rounded))
+                        .appTitle()
                         .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.96) : Color.primary)
                         .lineLimit(1)
                     Text(subtitle)
-                        .font(.system(size: 15, weight: .medium, design: .rounded))
+                        .appSecondary()
                         .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.60) : Color.secondary)
                         .lineLimit(1)
                 }
@@ -362,7 +373,7 @@ private struct SettingsNavigationRow<Destination: View>: View {
                     .foregroundStyle(colorScheme == .dark ? Color.white.opacity(0.40) : Color.secondary.opacity(0.9))
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 11)
+            .padding(.vertical, 12)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -371,35 +382,52 @@ private struct SettingsNavigationRow<Destination: View>: View {
 
 struct ProfileNameEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @EnvironmentObject private var theme: ThemeSettings
     @AppStorage(UserProfileStore.displayNameKey) private var profileDisplayName: String = ""
     @State private var draftName: String = ""
 
     var body: some View {
-        Form {
-            Section("Profilbild") {
+        SettingsScaffold {
+            SettingsSectionCard(title: "Profilbild") {
                 HStack(spacing: 14) {
                     ProfileAvatarBadge(name: effectiveDraftName, size: 64)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(effectiveDraftName)
-                            .font(.headline)
+                            .appTitle()
+                            .foregroundStyle(primaryTextColor)
                         Text("Das Profilbild wird automatisch aus deinen Initialen erzeugt.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .appSecondary()
+                            .foregroundStyle(secondaryTextColor)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .padding(.vertical, 4)
             }
 
-            Section("Name") {
+            SettingsSectionCard(title: "Name") {
+                Text("Der Name erscheint oben in den Einstellungen.")
+                    .appSecondary()
+                    .foregroundStyle(secondaryTextColor)
+
                 TextField("Dein Name", text: $draftName)
                     .textInputAutocapitalization(.words)
                     .autocorrectionDisabled()
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background {
+                        inputShape
+                            .fill(inputFillColor)
+                    }
+                    .overlay {
+                        inputShape
+                            .stroke(inputBorderColor, lineWidth: 1)
+                    }
             }
         }
         .navigationTitle("Profil")
         .navigationBarTitleDisplayMode(.inline)
-        .sheetCornerAlignedScrollContent()
+        .tint(theme.uiAccentColor)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
                 Button("Speichern", action: save)
@@ -421,6 +449,26 @@ struct ProfileNameEditorView: View {
         sanitizedDraft.isEmpty ? "Profil einrichten" : sanitizedDraft
     }
 
+    private var inputShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+    }
+
+    private var inputFillColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.035)
+    }
+
+    private var inputBorderColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.07)
+    }
+
+    private var primaryTextColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.96) : Color.primary
+    }
+
+    private var secondaryTextColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.62) : Color.secondary
+    }
+
     private func save() {
         guard !sanitizedDraft.isEmpty else { return }
         profileDisplayName = sanitizedDraft
@@ -428,25 +476,164 @@ struct ProfileNameEditorView: View {
     }
 }
 
-private struct FeedBehaviorSettingsView: View {
-    @AppStorage("feed.filter.unreadOnly", store: FeedStorage.defaults) private var unreadOnly: Bool = false
-    @AppStorage("ui.cards.previewLines") private var previewLines: Int = 3
+struct SettingsScaffold<Content: View>: View {
+    @EnvironmentObject private var theme: ThemeSettings
+
+    private let spacing: CGFloat
+    private let content: Content
+
+    init(spacing: CGFloat = 24, @ViewBuilder content: () -> Content) {
+        self.spacing = spacing
+        self.content = content()
+    }
 
     var body: some View {
-        Form {
-            Section("Filter") {
-                Toggle("Nur ungelesene Artikel anzeigen", isOn: $unreadOnly)
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: spacing) {
+                content
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+        }
+        .sheetCornerAlignedScrollContent()
+        .scrollContentBackground(.hidden)
+        .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
+    }
+}
+
+struct SettingsSectionCard<Content: View>: View {
+    let title: String?
+    let spacing: CGFloat
+    private let content: Content
+
+    init(title: String? = nil, spacing: CGFloat = 14, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.spacing = spacing
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title, !title.isEmpty {
+                Text(title)
+                    .appSectionLabel()
+                    .foregroundStyle(sectionHeadingColor)
+                    .padding(.leading, 6)
             }
 
-            Section("Vorschau") {
-                Stepper(value: $previewLines, in: 0...6) {
-                    Text("Anzahl Vorschauzeilen: \(previewLines)")
+            SettingsCardSurface {
+                VStack(alignment: .leading, spacing: spacing) {
+                    content
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(14)
             }
         }
-        .navigationTitle("Filter")
-        .navigationBarTitleDisplayMode(.inline)
-        .sheetCornerAlignedScrollContent()
+    }
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var sectionHeadingColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.74) : Color.secondary.opacity(0.92)
+    }
+}
+
+struct SettingsCardSurface<Content: View>: View {
+    @EnvironmentObject private var theme: ThemeSettings
+    @Environment(\.colorScheme) private var colorScheme
+
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .background { cardBackground }
+            .overlay { cardBorder }
+            .clipShape(cardShape)
+    }
+
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+    }
+
+    private var cardBorder: some View {
+        cardShape
+            .stroke(Color(uiColor: .separator).opacity(colorScheme == .dark ? 0.30 : 0.32), lineWidth: 0.8)
+    }
+
+    private var cardBackground: some View {
+        cardShape
+            .fill(colorScheme == .dark ? Color(uiColor: .secondarySystemGroupedBackground) : Color(uiColor: .systemBackground))
+            .overlay {
+                cardShape.fill(
+                    LinearGradient(
+                        colors: [
+                            theme.uiAccentColor.opacity(colorScheme == .dark ? 0.08 : 0.04),
+                            .clear
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+            }
+    }
+}
+
+struct SettingsValuePill: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+            )
+    }
+}
+
+struct SettingsIconTile: View {
+    let systemName: String
+    let tint: Color
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(tint.opacity(0.11))
+                .frame(width: 34, height: 34)
+
+            Image(systemName: systemName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(tint)
+        }
+    }
+}
+
+struct SettingsChromeBackground: View {
+    let accent: Color
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        ZStack {
+            Color(uiColor: colorScheme == .dark ? .black : .systemGroupedBackground)
+
+            LinearGradient(
+                colors: UIStylePolicy.accentBackgroundColors(accent: accent, colorScheme: colorScheme),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .opacity(colorScheme == .dark ? 0.18 : 0.10)
+
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(colorScheme == .dark ? 0.06 : 0.08)
+        }
     }
 }
 

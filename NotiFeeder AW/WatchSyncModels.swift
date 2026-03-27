@@ -14,6 +14,12 @@ struct WatchFeedSource: Codable, Hashable, Identifiable {
 }
 
 struct WatchFeedEntry: Codable, Hashable, Identifiable {
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
     var id: String { link }
     let title: String
     let shortTitle: String
@@ -36,11 +42,17 @@ struct WatchFeedEntry: Codable, Hashable, Identifiable {
 
     var relativeDateText: String {
         guard let parsedDate else { return "" }
-        return RelativeDateTimeFormatter().localizedString(for: parsedDate, relativeTo: Date())
+        return Self.relativeFormatter.localizedString(for: parsedDate, relativeTo: Date())
     }
 }
 
 enum WatchDateParser {
+    private static let isoFormatter: ISO8601DateFormatter = {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return iso
+    }()
+
     private static let formatters: [DateFormatter] = {
         let formats = [
             "EEE, dd MMM yyyy HH:mm:ss zzz",
@@ -66,7 +78,6 @@ enum WatchDateParser {
             }
         }
 
-        let iso = ISO8601DateFormatter()
-        return iso.date(from: value)
+        return isoFormatter.date(from: value)
     }
 }

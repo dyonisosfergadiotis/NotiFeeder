@@ -33,27 +33,15 @@
           ],
           "fill-specializations" : [
             {
-              "appearance" : "dark",
               "value" : {
-                "linear-gradient" : [
-                  "display-p3:0.65172,0.80431,0.98272,1.00000",
-                  "srgb:0.38045,0.51117,0.63391,1.00000"
-                ],
-                "orientation" : {
-                  "start" : {
-                    "x" : 0,
-                    "y" : 1
-                  },
-                  "stop" : {
-                    "x" : 1.033576333598726,
-                    "y" : 0
-                  }
-                }
+                "solid" : "extended-gray:1.00000,1.00000"
               }
             },
             {
-              "appearance" : "tinted",
-              "value" : "none"
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "display-p3:0.69497,0.81634,0.96206,1.00000"
+              }
             }
           ],
           "glass" : true,

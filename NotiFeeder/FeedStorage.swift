@@ -8,6 +8,13 @@ enum FeedStorage {
         static let savedArticles = "savedArticles"
         static let readArticleIDs = "readArticleIDs"
         static let bookmarkedArticleIDs = "bookmarkedArticleIDs"
+        static let profileDisplayName = "profile.displayName"
+        static let uiCardsPreviewLines = "ui.cards.previewLines"
+        static let uiCardsStyleFullColor = "ui.cards.style.fullColor"
+        static let readerFontScale = "readerFontScale"
+        static let readerFontFamily = "readerFontFamily"
+        static let readerLineSpacing = "readerLineSpacing"
+        static let readerTextAlignment = "readerTextAlignment"
     }
 
     static let suiteName = "group.notiFeeder"
@@ -26,7 +33,14 @@ enum FeedStorage {
             Keys.feedColorMap,
             Keys.savedArticles,
             Keys.readArticleIDs,
-            Keys.bookmarkedArticleIDs
+            Keys.bookmarkedArticleIDs,
+            Keys.profileDisplayName,
+            Keys.uiCardsPreviewLines,
+            Keys.uiCardsStyleFullColor,
+            Keys.readerFontScale,
+            Keys.readerFontFamily,
+            Keys.readerLineSpacing,
+            Keys.readerTextAlignment
         ]
 
         for key in keysToMigrate {

@@ -7,19 +7,24 @@ struct RefreshFeedsIntent: AppIntent {
     static var openAppWhenRun = false
 
     func perform() async throws -> some IntentResult {
-        let feeds = Self.loadSavedFeeds()
-        guard !feeds.isEmpty else {
+        let result = await FeedRefreshEngine.shared.refreshAllFeeds(trigger: .appIntent)
+
+        guard result.totalFeeds > 0 else {
             return .result(value: "Keine Feeds gefunden")
         }
 
-        return .result(value: "Feeds werden geprüft")
-    }
-
-    private static func loadSavedFeeds() -> [FeedSource] {
-        guard let data = FeedStorage.defaults.data(forKey: "savedFeeds"),
-              let parsed = try? JSONDecoder().decode([FeedSource].self, from: data) else {
-            return []
+        guard !result.wasCancelled else {
+            return .result(value: "Feed-Refresh abgebrochen")
         }
-        return parsed
+
+        if result.successfulFeeds == result.totalFeeds {
+            return .result(
+                value: "Aktualisiert: \(result.fetchedEntries) Einträge aus \(result.successfulFeeds) Feeds"
+            )
+        }
+
+        return .result(
+            value: "Teilweise aktualisiert: \(result.fetchedEntries) Einträge aus \(result.successfulFeeds)/\(result.totalFeeds) Feeds"
+        )
     }
 }

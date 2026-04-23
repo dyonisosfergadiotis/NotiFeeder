@@ -16,11 +16,16 @@ struct WatchContentView: View {
             }
             .overlay {
                 if store.entries.isEmpty {
-                    ContentUnavailableView(
-                        "Keine Artikel",
-                        systemImage: "newspaper",
-                        description: Text("Sobald das iPhone synchronisiert, erscheinen hier Artikel.")
-                    )
+                    ContentUnavailableView {
+                        Label {
+                            Text("Keine Artikel")
+                        } icon: {
+                            Image(systemName: "newspaper")
+                                .fontWeight(.light)
+                        }
+                    } description: {
+                        Text("Sobald das iPhone synchronisiert, erscheinen hier Artikel.")
+                    }
                 }
             }
             .navigationTitle("NotiFeeder")
@@ -35,6 +40,7 @@ struct WatchContentView: View {
                             ProgressView()
                         } else {
                             Image(systemName: "arrow.clockwise")
+                                .fontWeight(.light)
                         }
                     }
                     .disabled(store.isRefreshing)

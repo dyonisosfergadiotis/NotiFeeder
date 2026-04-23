@@ -11,10 +11,6 @@ struct WidgetSettingsView: View {
     private var transparentEnabled: Bool = false
     @AppStorage(WidgetSettingsStore.iconSizeKey, store: WidgetSettingsStore.defaults)
     private var iconSizeSelection: String = WidgetSettingsStore.iconSizeSmall
-    @AppStorage(WidgetSettingsStore.offsetXKey, store: WidgetSettingsStore.defaults)
-    private var offsetX: Double = 0
-    @AppStorage(WidgetSettingsStore.offsetYKey, store: WidgetSettingsStore.defaults)
-    private var offsetY: Double = 0
     @AppStorage(WidgetSettingsStore.refreshTokenKey, store: WidgetSettingsStore.defaults)
     private var refreshToken: Double = 0
 
@@ -23,18 +19,19 @@ struct WidgetSettingsView: View {
     @State private var isLoadingImage = false
 
     var body: some View {
-        SettingsScaffold {
-            SettingsSectionCard(title: "Anzeige") {
+        List {
+            Section {
                 Toggle(isOn: $transparentEnabled) {
                     HStack(spacing: 12) {
-                        SettingsIconTile(systemName: "square.on.square.intersection.dashed", tint: theme.uiAccentColor)
+                        SettingsListIconBadge(systemName: "square.on.square.intersection.dashed", tint: theme.uiAccentColor)
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Transparenter Hintergrund")
                                 .appTitle()
-                                .foregroundStyle(primaryTextColor)
+                                .foregroundStyle(.primary)
                             Text("Dein Widget übernimmt den Hintergrund von einem Homescreen-Screenshot.")
-                                .appSecondary()
-                                .foregroundStyle(secondaryTextColor)
+                                .appMeta()
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -42,69 +39,45 @@ struct WidgetSettingsView: View {
             }
 
             if transparentEnabled {
-                SettingsSectionCard(title: "Homescreen-Screenshot") {
-                    Text("Screenshot ohne Widgets aufnehmen und hier auswählen. So bleibt das Cropping deckungsgleich.")
-                        .appSecondary()
-                        .foregroundStyle(secondaryTextColor)
-
-                    screenshotPreview
-
+                Section {
                     PhotosPicker(selection: $selectedItem, matching: .images, photoLibrary: .shared()) {
-                        actionButtonLabel(
-                            title: backgroundImage == nil ? "Screenshot auswählen" : "Screenshot ersetzen",
-                            systemName: "photo.badge.plus"
-                        )
+                        screenshotPreview
                     }
                     .buttonStyle(.plain)
                     .disabled(isLoadingImage)
-
-                    if backgroundImage != nil {
-                        Button(role: .destructive) {
-                            WidgetSettingsStore.clearBackground()
-                            backgroundImage = nil
-                            WidgetCenter.shared.reloadAllTimelines()
-                        } label: {
-                            actionButtonLabel(title: "Screenshot entfernen", systemName: "trash")
+                    .accessibilityLabel(backgroundImage == nil ? "Screenshot auswählen" : "Screenshot ersetzen")
+                    .contextMenu {
+                        if backgroundImage != nil {
+                            Button(role: .destructive) {
+                                WidgetSettingsStore.clearBackground()
+                                backgroundImage = nil
+                                WidgetCenter.shared.reloadAllTimelines()
+                            } label: {
+                                Label("Screenshot entfernen", systemImage: "trash")
+                            }
                         }
-                        .buttonStyle(.plain)
                     }
+                } header: {
+                    Text("Homescreen-Screenshot")
+                } footer: {
+                    Text("Screenshot ohne Widgets aufnehmen und das Vorschaufeld antippen. So bleibt das Cropping deckungsgleich.")
+                        .appMeta()
                 }
 
-                SettingsSectionCard(title: "Home Screen Icons") {
+                Section {
                     Picker("Icon-Größe", selection: $iconSizeSelection) {
                         Text("Klein").tag(WidgetSettingsStore.iconSizeSmall)
                         Text("Groß").tag(WidgetSettingsStore.iconSizeLarge)
                     }
                     .pickerStyle(.segmented)
-
+                } header: {
+                    Text("Home Screen Icons")
+                } footer: {
                     Text("Die Transparenz hängt von der Icon-Größe ab. Die Auswahl hier muss deinem Homescreen entsprechen.")
-                        .appSecondary()
-                        .foregroundStyle(secondaryTextColor)
+                        .appMeta()
                 }
 
-                SettingsSectionCard(title: "Feinabstimmung", spacing: 18) {
-                    offsetControl(
-                        title: "Horizontal",
-                        systemName: "arrow.left.and.right",
-                        valueText: "\(Int(offsetX)) px",
-                        value: $offsetX,
-                        range: -80...80
-                    )
-
-                    offsetControl(
-                        title: "Vertikal",
-                        systemName: "arrow.up.and.down",
-                        valueText: "\(Int(offsetY)) px",
-                        value: $offsetY,
-                        range: -120...120
-                    )
-
-                    Text("Nur nötig, wenn das Widget minimal versetzt wirkt.")
-                        .appSecondary()
-                        .foregroundStyle(secondaryTextColor)
-                }
-
-                SettingsSectionCard(title: "Aktualisieren") {
+                Section {
                     Button {
                         WidgetSettingsStore.touchRefreshToken()
                         refreshToken = Date().timeIntervalSince1970
@@ -113,22 +86,18 @@ struct WidgetSettingsView: View {
                         actionButtonLabel(title: "Widgets neu laden", systemName: "arrow.clockwise")
                     }
                     .buttonStyle(.plain)
-
+                } header: {
+                    Text("Aktualisieren")
+                } footer: {
                     Text("Nutze das, wenn Hintergrund oder Inhalte nicht sofort übernommen werden.")
-                        .appSecondary()
-                        .foregroundStyle(secondaryTextColor)
-                }
-            } else {
-                SettingsSectionCard(title: "Akzent-Hintergrund") {
-                    Text("Wenn Transparenz aus ist, nutzt das Widget dieselbe Akzentfarbe wie die restliche App.")
-                        .appSecondary()
-                        .foregroundStyle(secondaryTextColor)
-
-                    accentPreview
-                        .frame(height: 118)
+                        .appMeta()
                 }
             }
         }
+        .sheetCornerAlignedScrollContent()
+        .scrollContentBackground(.hidden)
+        .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
+        .listStyle(.insetGrouped)
         .navigationTitle("Widgets")
         .navigationBarTitleDisplayMode(.inline)
         .tint(theme.uiAccentColor)
@@ -157,12 +126,6 @@ struct WidgetSettingsView: View {
         .onChange(of: iconSizeSelection) {
             WidgetCenter.shared.reloadAllTimelines()
         }
-        .onChange(of: offsetX) {
-            WidgetCenter.shared.reloadAllTimelines()
-        }
-        .onChange(of: offsetY) {
-            WidgetCenter.shared.reloadAllTimelines()
-        }
     }
 
     private var screenshotPreview: some View {
@@ -184,45 +147,17 @@ struct WidgetSettingsView: View {
                     .overlay {
                         VStack(spacing: 8) {
                             Image(systemName: "photo")
-                                .font(.system(size: 22, weight: .semibold))
+                                .font(.system(size: 22))
+                                .fontWeight(.light)
                                 .foregroundStyle(theme.uiAccentColor)
                             Text(isLoadingImage ? "Lädt Screenshot…" : "Kein Screenshot ausgewählt")
-                                .appSecondary()
-                                .foregroundStyle(secondaryTextColor)
+                                .appMeta()
+                                .foregroundStyle(.secondary)
                         }
                     }
             }
         }
-    }
-
-    private var accentPreview: some View {
-        RoundedRectangle(cornerRadius: UIStylePolicy.Radius.large, style: .continuous)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        theme.uiAccentColor.opacity(UIStylePolicy.chipTintOpacityUnread + 0.03),
-                        theme.uiAccentColor.opacity(0.6)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
-            .overlay(
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("NotiFeeder")
-                        .font(.headline)
-                        .foregroundStyle(theme.uiAccentColor)
-                    Text("Akzent-Hintergrund")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(UIStylePolicy.Spacing.medium),
-                alignment: .bottomLeading
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: UIStylePolicy.Radius.large, style: .continuous)
-                    .strokeBorder(theme.uiAccentColor.opacity(UIStylePolicy.chipTintOpacityUnread + 0.03))
-            )
+        .listRowInsets(EdgeInsets(top: 10, leading: 0, bottom: 10, trailing: 0))
     }
 
     private var previewShape: RoundedRectangle {
@@ -233,75 +168,41 @@ struct WidgetSettingsView: View {
         colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.08)
     }
 
-    private var primaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.96) : Color.primary
-    }
-
-    private var secondaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.62) : Color.secondary
-    }
-
-    private func offsetControl(
+    private func actionButtonLabel(
         title: String,
         systemName: String,
-        valueText: String,
-        value: Binding<Double>,
-        range: ClosedRange<Double>
+        iconTint: Color? = nil,
+        textColor: Color = .primary,
+        showsChevron: Bool = true
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                SettingsIconTile(systemName: systemName, tint: theme.uiAccentColor)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .appTitle()
-                        .foregroundStyle(primaryTextColor)
-                    Text("Verschiebt das transparente Cropping in \(title.lowercased())er Richtung.")
-                        .appSecondary()
-                        .foregroundStyle(secondaryTextColor)
-                }
-
-                Spacer(minLength: 0)
-                SettingsValuePill(text: valueText)
-            }
-
-            Slider(value: value, in: range, step: 1)
-                .tint(theme.uiAccentColor)
-        }
-    }
-
-    private func actionButtonLabel(title: String, systemName: String) -> some View {
         HStack(spacing: 12) {
-            SettingsIconTile(systemName: systemName, tint: theme.uiAccentColor)
+            SettingsListIconBadge(systemName: systemName, tint: iconTint ?? theme.uiAccentColor)
             Text(title)
                 .appTitle()
-                .foregroundStyle(primaryTextColor)
+                .foregroundStyle(textColor)
             Spacer(minLength: 0)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(secondaryTextColor)
+
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13))
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.tertiary)
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(theme.uiAccentColor.opacity(colorScheme == .dark ? 0.16 : 0.10))
-        )
+        .padding(.vertical, 3)
     }
 }
 
 private enum WidgetSettingsStore {
-    static let suiteName = "group.notiFeeder"
+    static let suiteName = AppGroupDefaults.suiteName
     static let transparentEnabledKey = "nf_widget_transparent_enabled"
     static let iconSizeKey = "nf_widget_icon_size"
     static let iconSizeSmall = "small"
     static let iconSizeLarge = "large"
-    static let offsetXKey = "nf_widget_offset_x"
-    static let offsetYKey = "nf_widget_offset_y"
     static let refreshTokenKey = "nf_widget_refresh_token"
 
     static let defaults: UserDefaults = {
-        UserDefaults(suiteName: suiteName) ?? .standard
+        AppGroupDefaults.defaults(suiteName: suiteName, fallback: .standard)
     }()
 
     static func backgroundKey() -> String {

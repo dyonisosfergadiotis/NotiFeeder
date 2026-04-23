@@ -1,8 +1,10 @@
 import WebKit
 import SwiftUI
 import Foundation
+import FoundationModels
 import SwiftData
 import UIKit
+import CryptoKit
 
 extension Color {
     var rgbComponents: (red: Int, green: Int, blue: Int)? {
@@ -28,6 +30,9 @@ extension Color {
 private enum FeedDetailLayout {
     static let expandedHeaderHeight: CGFloat = 92
     static let headerCollapseOffset: CGFloat = 40
+    static let compactToolbarSpacing: CGFloat = 6
+    static let compactToolbarHorizontalPadding: CGFloat = 2
+    static let compactToolbarHitTarget: CGFloat = 40
 }
 
 private struct FeedDetailHeaderHeightKey: PreferenceKey {
@@ -54,6 +59,8 @@ struct FeedDetailView: View {
     var onNavigateToEntry: (FeedEntry, NavigationDirection) -> Void = { _, _ in }
     /// Optional callback invoked when the read/unread state is toggled in this detail view.
     var onToggleRead: ((Bool) -> Void)? = nil
+    /// Optional callback invoked when bookmark state changes in this detail view.
+    var onToggleBookmark: ((Bool) -> Void)? = nil
 
     enum NavigationDirection {
         case previous
@@ -63,6 +70,7 @@ struct FeedDetailView: View {
     @EnvironmentObject private var theme: ThemeSettings
     @EnvironmentObject private var store: ArticleStore
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.colorScheme) private var colorScheme
     
     // --- UNIFIED COLLAPSE BEHAVIOR FOR TOOLBARS (scroll drives collapse; taps expand sides) ---
     @State private var collapseProgress: CGFloat = 0
@@ -75,7 +83,7 @@ struct FeedDetailView: View {
     @State private var webView: WKWebView = {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = []
+        config.mediaTypesRequiringUserActionForPlayback = .all
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.scrollView.showsVerticalScrollIndicator = false
         wv.scrollView.showsHorizontalScrollIndicator = false
@@ -96,32 +104,41 @@ struct FeedDetailView: View {
 
     private enum ActiveSheet: Identifiable {
         case share(payload: String, token: UUID = UUID())
+        case articleSummary
         case readerSettings
         var id: UUID {
             switch self {
             case .share(_, let token): return token
+            case .articleSummary: return ActiveSheet.articleSummaryID
             case .readerSettings: return ActiveSheet.readerSettingsID
             }
         }
+        private static let articleSummaryID = UUID()
         private static let readerSettingsID = UUID()
     }
 
-    init(entry: FeedEntry, feedColor: Color? = nil, onToggleRead: ((Bool) -> Void)? = nil) {
+    init(entry: FeedEntry,
+         feedColor: Color? = nil,
+         onToggleRead: ((Bool) -> Void)? = nil,
+         onToggleBookmark: ((Bool) -> Void)? = nil) {
         self.entry = entry
         self.feedColor = feedColor
         self.onToggleRead = onToggleRead
+        self.onToggleBookmark = onToggleBookmark
     }
 
     init(entry: FeedEntry,
          feedColor: Color? = nil,
          entriesProvider: @escaping () -> [FeedEntry],
          onNavigateToEntry: @escaping (FeedEntry, NavigationDirection) -> Void,
-         onToggleRead: ((Bool) -> Void)? = nil) {
+         onToggleRead: ((Bool) -> Void)? = nil,
+         onToggleBookmark: ((Bool) -> Void)? = nil) {
         self.entry = entry
         self.feedColor = feedColor
         self.entriesProvider = entriesProvider
         self.onNavigateToEntry = onNavigateToEntry
         self.onToggleRead = onToggleRead
+        self.onToggleBookmark = onToggleBookmark
     }
 
     private func currentIndex(in list: [FeedEntry]) -> Int? {
@@ -219,9 +236,15 @@ struct FeedDetailView: View {
         max(FeedDetailLayout.expandedHeaderHeight, headerHeight)
     }
 
+    private var articleSummarySourceText: String {
+        let rawSummary = entry.contentRaw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let preferredSource = rawSummary.isEmpty ? entry.content : HTMLText.stripHTML(rawSummary)
+        return HTMLText.normalizePreviewSpacing(in: preferredSource)
+    }
+
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(entry.title)
+            Text(entry.displayTitle)
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(2)
@@ -245,6 +268,7 @@ struct FeedDetailView: View {
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
                     Image(systemName: "eyeglasses")
+                        .fontWeight(.light)
                     Text(readingTimeLabel)
                 }
                 .multilineTextAlignment(.trailing)
@@ -263,8 +287,12 @@ struct FeedDetailView: View {
         ToolbarItem(placement: .topBarTrailing) {
             Button(action: { toggleBookmark() }) {
                 ZStack {
-                    Image(systemName: "bookmark").font(.system(size: 18, weight: .regular))
-                    Image(systemName: "bookmark.fill").font(.system(size: 18, weight: .regular))
+                    Image(systemName: "bookmark")
+                        .font(.system(size: 18))
+                        .fontWeight(.light)
+                    Image(systemName: "bookmark.fill")
+                        .font(.system(size: 18))
+                        .fontWeight(.light)
                         .mask(Rectangle().scaleEffect(y: isBookmarked ? 1 : 0, anchor: .top))
                 }
             }
@@ -276,35 +304,45 @@ struct FeedDetailView: View {
         ToolbarItemGroup(placement: .bottomBar) {
             // Left cluster
             if bothExpanded || isLeftBarExpanded {
-                HStack(spacing: 18) {
+                HStack(spacing: FeedDetailLayout.compactToolbarSpacing) {
                     Button(action: { activeSheet = .readerSettings }) {
                         Image(systemName: "textformat.size")
+                            .fontWeight(.light)
                             .foregroundStyle(resolvedFeedColor)
                     }
-                    .minimumHitTarget()
+                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
                     .accessibilityLabel("Lesedarstellung")
                     .accessibilityHint("Öffnet Einstellungen für Schrift und Layout")
                     Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) {
                         Image(systemName: "safari")
+                            .fontWeight(.light)
                             .foregroundStyle(resolvedFeedColor)
                     }
-                    .minimumHitTarget()
+                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
                     .accessibilityLabel("In Safari öffnen")
-                    VStack {
-                        Button(action: { gatherShareContent() }) {
-                            Image(systemName: "square.and.arrow.up")
-                                .foregroundStyle(resolvedFeedColor)
-                        }
-                    }.padding(.bottom,4)
-                    .minimumHitTarget()
+                    Button(action: { gatherShareContent() }) {
+                        Image(systemName: "square.and.arrow.up")
+                            .fontWeight(.light)
+                            .foregroundStyle(resolvedFeedColor)
+                    }
+                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
                     .accessibilityLabel("Teilen")
+                    Button(action: { activeSheet = .articleSummary }) {
+                        Image(systemName: "text.line.3.summary")
+                            .fontWeight(.light)
+                            .foregroundStyle(resolvedFeedColor)
+                    }
+                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
+                    .accessibilityLabel("Zusammenfassung anzeigen")
                     Button(action: { onToggleReadAction() }) {
                         Image(systemName: isReadLocal ? "eye.slash" : "eye")
+                            .fontWeight(.light)
                             .foregroundStyle(isReadLocal ? resolvedFeedColor : UIStylePolicy.neutralIcon)
                     }
-                    .minimumHitTarget()
+                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
                     .accessibilityLabel(isReadLocal ? "Als ungelesen markieren" : "Als gelesen markieren")
-                }.padding(.horizontal, 8)
+                }
+                .padding(.horizontal, FeedDetailLayout.compactToolbarHorizontalPadding)
             } else {
                 Button {
                     withAnimation(.snappy(duration: 0.2)) {
@@ -313,32 +351,36 @@ struct FeedDetailView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
+                        .fontWeight(.light)
                         .foregroundStyle(resolvedFeedColor)
                 }
                 .minimumHitTarget()
                 .accessibilityLabel("Aktionen einblenden")
             }
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 2)
 
             // Right cluster
             if bothExpanded || isRightBarExpanded {
-                HStack(spacing: 18) {
+                HStack(spacing: FeedDetailLayout.compactToolbarSpacing) {
                     Button(action: { goToPrevious() }) {
                         Image(systemName: "chevron.left")
+                            .fontWeight(.light)
                             .foregroundStyle(resolvedFeedColor.opacity(isAtFirstEntry ? 0.35 : 1.0))
                     }
-                        .minimumHitTarget()
+                        .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
                         .accessibilityLabel("Vorheriger Artikel")
                         .disabled(isAtFirstEntry)
                     Button(action: { goToNext() }) {
                         Image(systemName: "chevron.right")
+                            .fontWeight(.light)
                             .foregroundStyle(resolvedFeedColor.opacity(isAtLastEntry ? 0.35 : 1.0))
                     }
-                        .minimumHitTarget()
+                        .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
                         .accessibilityLabel("Nächster Artikel")
                         .disabled(isAtLastEntry)
-                }.padding(.horizontal, 8)
+                }
+                .padding(.horizontal, FeedDetailLayout.compactToolbarHorizontalPadding)
             } else {
                 Button {
                     withAnimation(.snappy(duration: 0.2)) {
@@ -348,6 +390,7 @@ struct FeedDetailView: View {
                     }
                 } label: {
                     Image(systemName: "chevron.left.chevron.right")
+                        .fontWeight(.light)
                         .foregroundStyle(resolvedFeedColor)
                 }
                 .minimumHitTarget()
@@ -370,9 +413,13 @@ struct FeedDetailView: View {
     }
 
     var body: some View {
+        let htmlDocument = formattedHTML(accentHex: webAccentHexString())
+
         ZStack(alignment: .top) {
             WebView(webView: webView,
-                    htmlContent: formattedHTML(accentHex: webAccentHexString()),
+                    articleLink: entry.link,
+                    articleURL: URL(string: entry.link),
+                    htmlContent: htmlDocument,
                     topInset: effectiveHeaderHeight,
                     collapseProgress: $collapseProgress,
                     readingProgress: $readingProgress)
@@ -383,7 +430,7 @@ struct FeedDetailView: View {
                 .background(
                     GeometryReader { proxy in
                         LinearGradient(
-                            colors: [headerTint.opacity(0.30),headerTint.opacity(UIStylePolicy.glassAccentOpacity)],
+                            colors: [headerTint.opacity(headerOverlayPrimaryOpacity), headerTint.opacity(headerOverlaySecondaryOpacity)],
                             startPoint: .top,
                             endPoint: .bottom
                         )
@@ -423,11 +470,10 @@ struct FeedDetailView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .navigationTitle(collapseProgress > 0.6 ? entry.title : "")
+        .navigationTitle(collapseProgress > 0.6 ? entry.displayTitle : "")
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {dynamicBottomToolbar}
         .onAppear {
-            store.markRecentlyRead(articleID: entry.link)
             isReadLocal = store.isRead(articleID: entry.link)
             isBookmarked = isCurrentlyBookmarked()
             collapseProgress = 0
@@ -481,6 +527,14 @@ struct FeedDetailView: View {
             case .share(let payload, _):
                 ShareSheet(items: [payload])
                     .presentationDetents([UIStylePolicy.Sheet.mediumDetent])
+            case .articleSummary:
+                ArticleSummarySheet(
+                    title: entry.displayTitle,
+                    sourceText: articleSummarySourceText,
+                    link: entry.link,
+                    feedColor: resolvedFeedColor
+                )
+                .environmentObject(store)
             case .readerSettings:
                 ReaderSettingsPanel(textAlignment: $readerTextAlignmentRaw,
                                     fontScale: $readerFontScale,
@@ -493,10 +547,249 @@ struct FeedDetailView: View {
     }
 
     private func fixYouTubeIframes(in html: String) -> String {
-        let pattern = "<iframe([^>]*)src=\"([^\\\"]*youtube[^\\\"]*)\"([^>]*)>"
-        return html.replacingOccurrences(of: pattern,
-                                         with: "<iframe$1src=\\\"$2\\\"$3 allow=\\\"fullscreen\\\" playsinline></iframe>",
-                                         options: .regularExpression)
+        let pattern = "<iframe\\b([^>]*?)\\bsrc\\s*=\\s*([\"'])([^\"']+)\\2([^>]*)>"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return html
+        }
+
+        let fullRange = NSRange(html.startIndex..<html.endIndex, in: html)
+        let matches = regex.matches(in: html, options: [], range: fullRange)
+        guard !matches.isEmpty else { return html }
+
+        var result = html
+        for match in matches.reversed() {
+            guard
+                match.numberOfRanges >= 5,
+                let openTagRange = Range(match.range(at: 0), in: result),
+                let leadingAttributesRange = Range(match.range(at: 1), in: result),
+                let srcRange = Range(match.range(at: 3), in: result),
+                let trailingAttributesRange = Range(match.range(at: 4), in: result)
+            else {
+                continue
+            }
+
+            let source = String(result[srcRange])
+            guard let normalizedSource = normalizedYouTubeEmbedURL(from: source) else {
+                continue
+            }
+
+            let rawAttributes = String(result[leadingAttributesRange]) + String(result[trailingAttributesRange])
+            let cleanedAttributes = cleanYouTubeIframeAttributes(rawAttributes)
+            let replacement = """
+            <iframe\(cleanedAttributes) src="\(normalizedSource)" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen playsinline loading="lazy" referrerpolicy="strict-origin-when-cross-origin">
+            """
+            result.replaceSubrange(openTagRange, with: replacement)
+        }
+
+        return result
+    }
+
+    private func fixHTML5VideoTags(in html: String) -> String {
+        let pattern = "<video\\b([^>]*)>"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return html
+        }
+
+        let fullRange = NSRange(html.startIndex..<html.endIndex, in: html)
+        let matches = regex.matches(in: html, options: [], range: fullRange)
+        guard !matches.isEmpty else { return html }
+
+        var result = html
+        for match in matches.reversed() {
+            guard
+                match.numberOfRanges >= 2,
+                let openTagRange = Range(match.range(at: 0), in: result),
+                let attributesRange = Range(match.range(at: 1), in: result)
+            else {
+                continue
+            }
+
+            let rawAttributes = String(result[attributesRange])
+            let cleanedAttributes = cleanHTML5VideoAttributes(rawAttributes)
+            let replacement = """
+            <video\(cleanedAttributes) playsinline webkit-playsinline preload="metadata">
+            """
+            result.replaceSubrange(openTagRange, with: replacement)
+        }
+
+        return result
+    }
+
+    private func cleanHTML5VideoAttributes(_ rawAttributes: String) -> String {
+        var cleaned = rawAttributes
+            .replacingOccurrences(of: "\\s*\\/", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let removablePatterns = [
+            "\\sautoplay\\b",
+            "\\splaysinline\\b",
+            "\\swebkit-playsinline\\b",
+            "\\salign\\s*=\\s*\"[^\"]*\"",
+            "\\salign\\s*=\\s*'[^']*'",
+            "\\sstyle\\s*=\\s*\"[^\"]*\"",
+            "\\sstyle\\s*=\\s*'[^']*'",
+            "\\swidth\\s*=\\s*\"[^\"]*\"",
+            "\\swidth\\s*=\\s*'[^']*'",
+            "\\sheight\\s*=\\s*\"[^\"]*\"",
+            "\\sheight\\s*=\\s*'[^']*'",
+            "\\spreload\\s*=\\s*\"[^\"]*\"",
+            "\\spreload\\s*=\\s*'[^']*'"
+        ]
+
+        for pattern in removablePatterns {
+            cleaned = cleaned.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+        }
+
+        cleaned = cleaned
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return cleaned.isEmpty ? "" : " \(cleaned)"
+    }
+
+    private func cleanYouTubeIframeAttributes(_ rawAttributes: String) -> String {
+        var cleaned = rawAttributes
+            .replacingOccurrences(of: "\\s*\\/", with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let removablePatterns = [
+            "\\sallow\\s*=\\s*\"[^\"]*\"",
+            "\\sallow\\s*=\\s*'[^']*'",
+            "\\sallowfullscreen\\b",
+            "\\splaysinline\\b",
+            "\\swidth\\s*=\\s*\"[^\"]*\"",
+            "\\swidth\\s*=\\s*'[^']*'",
+            "\\sheight\\s*=\\s*\"[^\"]*\"",
+            "\\sheight\\s*=\\s*'[^']*'",
+            "\\sloading\\s*=\\s*\"[^\"]*\"",
+            "\\sloading\\s*=\\s*'[^']*'",
+            "\\sreferrerpolicy\\s*=\\s*\"[^\"]*\"",
+            "\\sreferrerpolicy\\s*=\\s*'[^']*'"
+        ]
+
+        for pattern in removablePatterns {
+            cleaned = cleaned.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+        }
+
+        cleaned = cleaned
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return cleaned.isEmpty ? "" : " \(cleaned)"
+    }
+
+    private func normalizedYouTubeEmbedURL(from source: String) -> String? {
+        guard let components = URLComponents(string: source), let host = components.host?.lowercased() else {
+            return nil
+        }
+
+        let normalizedHost = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+        guard normalizedHost == "youtube.com"
+                || normalizedHost == "m.youtube.com"
+                || normalizedHost == "youtube-nocookie.com"
+                || normalizedHost == "youtu.be" else {
+            return nil
+        }
+
+        let pathParts = components.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+
+        let videoID: String?
+        if normalizedHost == "youtu.be" {
+            videoID = pathParts.first
+        } else if pathParts.first == "embed", pathParts.count > 1 {
+            videoID = pathParts[1]
+        } else if pathParts.first == "watch" {
+            videoID = components.queryItems?.first(where: { $0.name.lowercased() == "v" })?.value
+        } else if (pathParts.first == "shorts" || pathParts.first == "live"), pathParts.count > 1 {
+            videoID = pathParts[1]
+        } else {
+            videoID = components.queryItems?.first(where: { $0.name.lowercased() == "v" })?.value
+        }
+
+        guard let rawID = videoID, !rawID.isEmpty else {
+            return nil
+        }
+
+        let sanitizedID = rawID.replacingOccurrences(of: "[^A-Za-z0-9_-]", with: "", options: .regularExpression)
+        guard !sanitizedID.isEmpty else { return nil }
+
+        var embedComponents = URLComponents()
+        embedComponents.scheme = "https"
+        embedComponents.host = "www.youtube.com"
+        embedComponents.path = "/embed/\(sanitizedID)"
+
+        let startSeconds = extractStartSeconds(from: components.queryItems)
+        let supportedQueryItems = components.queryItems?.filter {
+            let name = $0.name.lowercased()
+            return name == "list" || name == "si" || name == "end"
+        } ?? []
+
+        var outputQueryItems = supportedQueryItems
+        if let startSeconds {
+            outputQueryItems.append(URLQueryItem(name: "start", value: String(startSeconds)))
+        }
+        embedComponents.queryItems = outputQueryItems.isEmpty ? nil : outputQueryItems
+
+        return embedComponents.string
+    }
+
+    private func extractStartSeconds(from queryItems: [URLQueryItem]?) -> Int? {
+        guard let queryItems else { return nil }
+        let directStart = queryItems.first { item in
+            let key = item.name.lowercased()
+            return key == "start" || key == "time_continue"
+        }?.value
+        if let directStart, let seconds = Int(directStart), seconds > 0 {
+            return seconds
+        }
+
+        if let tValue = queryItems.first(where: { $0.name.lowercased() == "t" })?.value {
+            return parseYouTubeTime(tValue)
+        }
+
+        return nil
+    }
+
+    private func parseYouTubeTime(_ value: String) -> Int? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return nil }
+
+        if let seconds = Int(trimmed), seconds > 0 {
+            return seconds
+        }
+
+        guard let regex = try? NSRegularExpression(pattern: "(\\d+)([hms])", options: []) else {
+            return nil
+        }
+
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        let matches = regex.matches(in: trimmed, options: [], range: range)
+        guard !matches.isEmpty else { return nil }
+
+        var total = 0
+        for match in matches {
+            guard
+                match.numberOfRanges == 3,
+                let amountRange = Range(match.range(at: 1), in: trimmed),
+                let unitRange = Range(match.range(at: 2), in: trimmed),
+                let amount = Int(trimmed[amountRange])
+            else {
+                continue
+            }
+
+            switch trimmed[unitRange].first {
+            case "h": total += amount * 3600
+            case "m": total += amount * 60
+            case "s": total += amount
+            default: break
+            }
+        }
+
+        return total > 0 ? total : nil
     }
     
     private func formattedHTML(accentHex: String) -> String {
@@ -506,25 +799,45 @@ struct FeedDetailView: View {
         let textAlignCSS = readerTextAlignmentRaw == "justified" ? "justify" : readerTextAlignmentRaw
         let rgb = resolvedFeedColor.rgbComponents ?? (0,0,0)
         let background: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.1)"
-        let mediaGlow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.22)"
-        let mediaShadow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.12)"
+        let mediaGlow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.16)"
+        let mediaShadow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.14)"
         let codeBackground: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.16)"
         let inlineCodeBackground: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.22)"
-        let rawBody = (entry.contentRaw?.isEmpty == false) ? entry.contentRaw! : entry.content
+        let rawBodySource = (entry.contentRaw?.isEmpty == false) ? entry.contentRaw! : entry.content
+        let rawBody = HTMLText.normalizeHTMLContent(rawBodySource)
 
         return """
         <html>
           <head>
+            <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
               html { overflow-x: hidden; }
+              :root { --reader-media-width: 90%; }
               * { box-sizing: border-box; }
               body { font-family: \(fontFamilyCSS); font-size: \(fontSize)px; padding: 16px; line-height: \(lineHeight); margin: 0; text-align: \(textAlignCSS); background-color: \(background); overflow-wrap: break-word; word-break: normal; }
               p, li, blockquote { overflow-wrap: anywhere; }
+              p { margin: 0 0 0.78em; }
+              p:last-child { margin-bottom: 0; }
+              ul, ol {
+                margin: 0.56em 0 0.9em;
+                padding-inline-start: 1.18em;
+              }
+              li {
+                margin: 0.22em 0;
+                padding-inline-start: 0.08em;
+              }
+              li > p {
+                margin: 0.18em 0;
+              }
+              li > p:first-child { margin-top: 0; }
+              li > p:last-child { margin-bottom: 0; }
+              li > ul, li > ol { margin: 0.32em 0 0.46em; }
               @media (prefers-color-scheme: dark) { body { color: #EAEAEA; } a { color: \(accentHex); } html { background-color: #000000; } }
               @media (prefers-color-scheme: light) { body { color: #111111; } a { color: \(accentHex); } html { background-color: #ffffff; } }
-              img, video, iframe { display: block; max-width: 90%; height: auto; border-radius: 10px; margin: 16px auto; box-shadow: 0 10px 28px \(mediaShadow), 0 0 0 1px rgba(255,255,255,0.08), 0 0 22px \(mediaGlow); }
-              iframe { aspect-ratio: 16/9; }
+              img, video, iframe { display: block !important; max-width: var(--reader-media-width) !important; border-radius: 10px; margin: 16px auto !important; float: none !important; clear: both; box-shadow: 0 10px 24px \(mediaShadow), 0 0 0 1px rgba(255,255,255,0.08), 0 0 12px \(mediaGlow), 0 0 20px \(mediaGlow); }
+              img, video { width: auto !important; height: auto !important; }
+              iframe { width: var(--reader-media-width) !important; height: auto !important; aspect-ratio: 16/9; }
               pre, code, kbd, samp { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; text-align: left; }
               code, kbd, samp {
                 background: \(inlineCodeBackground);
@@ -555,8 +868,33 @@ struct FeedDetailView: View {
                 line-height: inherit;
               }
             </style>
+            <script>
+              document.addEventListener('DOMContentLoaded', function () {
+                document.querySelectorAll('video').forEach(function (video) {
+                  try {
+                    video.autoplay = false;
+                    video.removeAttribute('autoplay');
+                    video.setAttribute('playsinline', '');
+                    video.setAttribute('webkit-playsinline', '');
+                    video.pause();
+                  } catch (_) {}
+                });
+
+                document.querySelectorAll('iframe[src]').forEach(function (frame) {
+                  try {
+                    var rawSrc = frame.getAttribute('src');
+                    if (!rawSrc) { return; }
+                    var parsed = new URL(rawSrc, window.location.href);
+                    if (parsed.searchParams.get('autoplay') === '1') {
+                      parsed.searchParams.set('autoplay', '0');
+                      frame.setAttribute('src', parsed.toString());
+                    }
+                  } catch (_) {}
+                });
+              });
+            </script>
           </head>
-          <body>\(fixYouTubeIframes(in: rawBody))</body>
+          <body>\(fixHTML5VideoTags(in: fixYouTubeIframes(in: rawBody)))</body>
         </html>
         """
     }
@@ -567,9 +905,20 @@ struct FeedDetailView: View {
 
     private var headerTint: Color { resolvedFeedColor }
 
+    private var headerOverlayPrimaryOpacity: Double {
+        colorScheme == .dark ? 0.30 : 0.42
+    }
+
+    private var headerOverlaySecondaryOpacity: Double {
+        colorScheme == .dark ? UIStylePolicy.glassAccentOpacity : 0.16
+    }
+
     private var headerBackgroundGradient: LinearGradient { //ganz oben dad ding
         LinearGradient(
-            colors: [headerTint.opacity(0.5), headerTint.opacity(0.25)],
+            colors: [
+                headerTint.opacity(colorScheme == .dark ? 0.5 : 0.62),
+                headerTint.opacity(colorScheme == .dark ? 0.25 : 0.34)
+            ],
             startPoint: .top,
             endPoint: .bottom
         )
@@ -592,32 +941,36 @@ struct FeedDetailView: View {
     private func toggleBookmark() {
         BookmarkService.toggleBookmark(for: entry, context: modelContext)
         isBookmarked = BookmarkService.isBookmarked(link: entry.link, context: modelContext)
+        onToggleBookmark?(isBookmarked)
     }
 }
 
 struct WebView: UIViewRepresentable {
     let webView: WKWebView
+    let articleLink: String
+    let articleURL: URL?
     let htmlContent: String
     let topInset: CGFloat
     @Binding var collapseProgress: CGFloat
     @Binding var readingProgress: CGFloat
+    private var youtubeEmbedBaseURL: URL? {
+        let appIdentifier = Bundle.main.bundleIdentifier?.lowercased() ?? "notifeeder.app"
+        return URL(string: "https://\(appIdentifier)")
+    }
 
     func makeUIView(context: Context) -> WKWebView {
         webView.scrollView.delegate = context.coordinator
         webView.navigationDelegate = context.coordinator
-        context.coordinator.lastLoadedHTML = htmlContent
-        webView.loadHTMLString(htmlContent, baseURL: nil)
-        applyTopInset(topInset, to: webView.scrollView, forcePinToTop: true)
+        loadContent(into: webView, coordinator: context.coordinator, forcePinToTop: true)
 
         return webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        if context.coordinator.lastLoadedHTML != htmlContent {
-            context.coordinator.lastLoadedHTML = htmlContent
+        let expectedLocalFilePath = OfflineArticleArchive.articleHTMLFileURL(forArticleLink: articleLink)?.path
+        if context.coordinator.lastLoadedHTML != htmlContent || context.coordinator.lastLoadedFilePath != expectedLocalFilePath {
             context.coordinator.resetScrollState()
-            uiView.loadHTMLString(htmlContent, baseURL: nil)
-            applyTopInset(topInset, to: uiView.scrollView, forcePinToTop: true)
+            loadContent(into: uiView, coordinator: context.coordinator, forcePinToTop: true)
             return
         }
 
@@ -652,12 +1005,31 @@ struct WebView: UIViewRepresentable {
         }
     }
 
+    private func loadContent(into webView: WKWebView, coordinator: Coordinator, forcePinToTop: Bool) {
+        coordinator.lastLoadedHTML = htmlContent
+
+        if let localFileURL = OfflineArticleArchive.prepareOfflineHTMLDocument(
+            forArticleLink: articleLink,
+            articleURL: articleURL,
+            htmlDocument: htmlContent
+        ), let readAccessURL = OfflineArticleArchive.readAccessURL() {
+            coordinator.lastLoadedFilePath = localFileURL.path
+            webView.loadFileURL(localFileURL, allowingReadAccessTo: readAccessURL)
+        } else {
+            coordinator.lastLoadedFilePath = nil
+            webView.loadHTMLString(htmlContent, baseURL: youtubeEmbedBaseURL)
+        }
+
+        applyTopInset(topInset, to: webView.scrollView, forcePinToTop: forcePinToTop)
+    }
+
     class Coordinator: NSObject, UIScrollViewDelegate, WKNavigationDelegate {
         @Binding var collapseProgress: CGFloat
         @Binding var readingProgress: CGFloat
         private let collapseRange: CGFloat = 120 // pixels over which header collapses
         private let progressUpdateThreshold: CGFloat = 0.005
         var lastLoadedHTML: String = ""
+        var lastLoadedFilePath: String?
 
         init(collapseProgress: Binding<CGFloat>, readingProgress: Binding<CGFloat>) {
             _collapseProgress = collapseProgress
@@ -729,6 +1101,443 @@ struct ShareSheet: UIViewControllerRepresentable {
         UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
+}
+
+private struct ArticleSummarySheet: View {
+    private static let summaryCache: NSCache<NSString, NSString> = {
+        let cache = NSCache<NSString, NSString>()
+        cache.countLimit = 128
+        return cache
+    }()
+
+    private static let summaryInstructions = """
+    Du erstellst praezise, gut lesbare Artikelzusammenfassungen fuer ein mobiles Sheet in einer RSS-App.
+    Antworte immer auf Deutsch.
+    Gib nur separate Stichpunkte zurueck, pro Zeile genau einen Punkt.
+    Keine Ueberschrift, keine Einleitung, keine Nummerierung, kein Fazit und kein Markdown.
+    Formuliere konkret, natuerlich und ohne Fuellsaetze.
+    Nenne nur Informationen, die im Text klar belegt sind.
+    """
+
+    private struct SummaryLayoutProfile {
+        let sourceWordCount: Int
+        let targetWordCount: Int
+        let bulletCount: Int
+        let minWordsPerBullet: Int
+        let maxWordsPerBullet: Int
+        let maxCharactersPerBullet: Int
+        let detentFraction: CGFloat
+        let coveragePercent: Int
+    }
+
+    private enum SummaryState {
+        case loading
+        case ready([String])
+        case unavailable(String)
+        case failed(String)
+    }
+
+    let title: String
+    let sourceText: String
+    let link: String
+    let feedColor: Color
+    @EnvironmentObject private var store: ArticleStore
+    @State private var model = SystemLanguageModel.default
+    @State private var summaryState: SummaryState = .loading
+
+    private var sharePayload: String? {
+        guard case .ready(let bullets) = summaryState else { return nil }
+        let summary = bullets.map { "\u{2022} \($0)" }.joined(separator: "\n")
+        return [title, summary, link]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
+    }
+
+    private var preparedSourceText: String {
+        Self.preparedSourceText(from: sourceText)
+    }
+
+    private var summaryLayout: SummaryLayoutProfile {
+        Self.summaryLayoutProfile(for: preparedSourceText)
+    }
+
+    private var sourceSignature: String {
+        Self.sourceSignature(for: preparedSourceText)
+    }
+
+    private var summaryDetent: PresentationDetent {
+        .fraction(summaryLayout.detentFraction)
+    }
+
+    private var summaryCoverageLabel: String {
+        "Ca. \(summaryLayout.coveragePercent)% des Artikels"
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack(alignment: .topLeading) {
+                LinearGradient(
+                    colors: [
+                        feedColor.opacity(0.15),
+                        feedColor.opacity(0.06),
+                        Color(.systemBackground)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+
+                VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.large) {
+                    summaryContent
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, UIStylePolicy.Spacing.large)
+                .padding(.top, UIStylePolicy.Spacing.large)
+                .padding(.bottom, UIStylePolicy.Spacing.medium)
+            }
+            .navigationTitle(title)
+            .navigationSubtitle("Zusammenfassung mit Apple Intelligence")
+            .navigationBarTitleDisplayMode(.inline)
+            .presentationDetents([summaryDetent])
+            .presentationDragIndicator(.visible)
+            .task(id: generationTaskID) {
+                await generateSummaryIfNeeded()
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if let sharePayload {
+                        ShareLink(item: sharePayload) {
+                            Image(systemName: "square.and.arrow.up")
+                                .fontWeight(.light)
+                                .foregroundStyle(feedColor)
+                        }
+                        .accessibilityLabel("Zusammenfassung teilen")
+                    } else {
+                        Button(action: {}) {
+                            Image(systemName: "square.and.arrow.up")
+                                .fontWeight(.light)
+                                .foregroundStyle(UIStylePolicy.neutralIcon)
+                        }
+                        .disabled(true)
+                        .accessibilityLabel("Zusammenfassung teilen")
+                    }
+                }
+            }
+        }
+    }
+
+    private var generationTaskID: String {
+        "\(link)|\(sourceSignature)"
+    }
+
+    @ViewBuilder
+    private var summaryContent: some View {
+        switch summaryState {
+        case .loading:
+            summaryCard {
+                Label("Apple Intelligence erstellt die Zusammenfassung lokal.", systemImage: "sparkles")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ProgressView()
+                    .tint(feedColor)
+                Text("Erstelle längere Zusammenfassung …")
+                    .font(.system(size: 18, weight: .medium, design: .rounded))
+                    .foregroundStyle(.primary)
+                Text("Die Ausgabe wird lokal auf dem Gerät generiert.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        case .ready(let bullets):
+            VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.medium) {
+                summaryCard {
+                    HStack(alignment: .center, spacing: UIStylePolicy.Spacing.small) {
+                        Label("Lokal gespeichert", systemImage: "checkmark.circle.fill")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Text(summaryCoverageLabel)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(feedColor)
+                    }
+
+                    ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
+                        HStack(alignment: .top, spacing: UIStylePolicy.Spacing.medium) {
+                            Circle()
+                                .fill(feedColor)
+                                .frame(width: 8, height: 8)
+                                .padding(.top, 8)
+                            Text(bullet)
+                                .font(.system(size: 18, weight: .medium, design: .rounded))
+                                .foregroundStyle(.primary)
+                                .lineSpacing(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .textSelection(.enabled)
+        case .unavailable(let message):
+            summaryStatusView(
+                iconName: "sparkles.slash",
+                title: "Zusammenfassung nicht verfügbar",
+                message: message
+            )
+        case .failed(let message):
+            summaryStatusView(
+                iconName: "exclamationmark.triangle",
+                title: "Zusammenfassung fehlgeschlagen",
+                message: message
+            )
+        }
+    }
+
+    private func summaryStatusView(iconName: String, title: String, message: String) -> some View {
+        summaryCard {
+            Image(systemName: iconName)
+                .font(.title3)
+                .foregroundStyle(feedColor)
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(.primary)
+            Text(message)
+                .foregroundStyle(.secondary)
+            if !sourcePreview.isEmpty {
+                Text(sourcePreview)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(7)
+            }
+        }
+    }
+
+    private var sourcePreview: String {
+        let prepared = preparedSourceText
+        guard !prepared.isEmpty else { return "" }
+        if prepared.count <= 420 {
+            return prepared
+        }
+        return String(prepared.prefix(420)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+    }
+
+    @MainActor
+    private func generateSummaryIfNeeded() async {
+        let preparedSource = preparedSourceText
+        guard !preparedSource.isEmpty else {
+            summaryState = .failed("Für diesen Artikel ist nicht genug Text für eine Zusammenfassung verfügbar.")
+            return
+        }
+
+        let cacheKey = Self.cacheKey(link: link, sourceSignature: sourceSignature)
+        if let cached = Self.summaryCache.object(forKey: cacheKey) {
+            let bullets = Self.normalizedBullets(from: cached as String, layout: summaryLayout)
+            if !bullets.isEmpty {
+                summaryState = .ready(bullets)
+                return
+            }
+        }
+
+        if let persistedSummary = store.summary(articleID: link, matching: sourceSignature) {
+            let bullets = Self.normalizedBullets(from: persistedSummary, layout: summaryLayout)
+            if !bullets.isEmpty {
+                Self.summaryCache.setObject(persistedSummary as NSString, forKey: cacheKey)
+                summaryState = .ready(bullets)
+                return
+            }
+        }
+
+        switch model.availability {
+        case .available:
+            break
+        case .unavailable(let reason):
+            summaryState = .unavailable(Self.message(for: reason))
+            return
+        }
+
+        summaryState = .loading
+
+        do {
+            let session = LanguageModelSession(
+                model: model,
+                instructions: Self.summaryInstructions
+            )
+            let response = try await session.respond(
+                to: Self.summaryPrompt(title: title, sourceText: preparedSource, layout: summaryLayout),
+                options: GenerationOptions(
+                    temperature: 0.2,
+                    maximumResponseTokens: 160
+                )
+            )
+
+            guard !Task.isCancelled else { return }
+
+            let bullets = Self.normalizedBullets(from: response.content, layout: summaryLayout)
+            guard !bullets.isEmpty else {
+                summaryState = .failed("Die Zusammenfassung konnte nicht in ein kompaktes Format gebracht werden.")
+                return
+            }
+
+            let persistedSummary = bullets.joined(separator: "\n")
+            Self.summaryCache.setObject(persistedSummary as NSString, forKey: cacheKey)
+            store.saveSummary(persistedSummary, articleID: link, sourceSignature: sourceSignature)
+            summaryState = .ready(bullets)
+        } catch let error as LanguageModelSession.GenerationError {
+            guard !Task.isCancelled else { return }
+            summaryState = .failed(Self.message(for: error))
+        } catch {
+            guard !Task.isCancelled else { return }
+            summaryState = .failed("Die Zusammenfassung konnte gerade nicht erstellt werden.")
+        }
+    }
+
+    private nonisolated static func cacheKey(link: String, sourceSignature: String) -> NSString {
+        "\(link)|\(sourceSignature)" as NSString
+    }
+
+    private nonisolated static func preparedSourceText(from sourceText: String) -> String {
+        let normalized = HTMLText.normalizePreviewSpacing(in: sourceText)
+        return String(normalized.prefix(12_000))
+    }
+
+    private nonisolated static func sourceSignature(for sourceText: String) -> String {
+        let digest = SHA256.hash(data: Data(("summary-v2|" + sourceText).utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private nonisolated static func summaryLayoutProfile(for sourceText: String) -> SummaryLayoutProfile {
+        let wordCount = max(1, sourceText.split(whereSeparator: \.isWhitespace).count)
+        let proportionalWordCount = Int((Double(wordCount) * 0.14).rounded())
+        let targetWordCount = min(76, max(48, proportionalWordCount))
+        let bulletCount = targetWordCount >= 64 ? 4 : 3
+        let averageWordsPerBullet = Int(ceil(Double(targetWordCount) / Double(bulletCount)))
+        let coveragePercent = min(35, max(8, Int((Double(targetWordCount) / Double(wordCount) * 100).rounded())))
+
+        return SummaryLayoutProfile(
+            sourceWordCount: wordCount,
+            targetWordCount: targetWordCount,
+            bulletCount: bulletCount,
+            minWordsPerBullet: max(12, averageWordsPerBullet - 2),
+            maxWordsPerBullet: min(20, averageWordsPerBullet + 2),
+            maxCharactersPerBullet: bulletCount == 4 ? 150 : 170,
+            detentFraction: bulletCount == 4 ? 0.58 : 0.54,
+            coveragePercent: coveragePercent
+        )
+    }
+
+    private nonisolated static func summaryPrompt(title: String, sourceText: String, layout: SummaryLayoutProfile) -> String {
+        """
+        Erstelle eine gut lesbare, mobile Artikelzusammenfassung.
+        Gib exakt \(layout.bulletCount) Zeilen aus.
+        Zielumfang: insgesamt ungefaehr \(layout.targetWordCount) Woerter, also etwa \(layout.coveragePercent)% des Artikels.
+        Jede Zeile soll ungefaehr \(layout.minWordsPerBullet)-\(layout.maxWordsPerBullet) Woerter haben.
+        Verteile die wichtigsten Informationen ueber alle Zeilen. Keine Zeile darf leer sein.
+
+        Titel: \(title)
+
+        Artikeltext:
+        \(sourceText)
+        """
+    }
+
+    private nonisolated static func normalizedBullets(from response: String, layout: SummaryLayoutProfile) -> [String] {
+        let normalizedResponse = HTMLText.normalizePreviewSpacing(
+            in: response.replacingOccurrences(of: "\r\n", with: "\n")
+        )
+
+        let lineBullets = normalizedResponse
+            .components(separatedBy: .newlines)
+            .map { Self.cleanBulletLine($0, maxCharacters: layout.maxCharactersPerBullet) }
+            .filter { !$0.isEmpty }
+
+        if lineBullets.count >= 2 {
+            return Array(lineBullets.prefix(layout.bulletCount))
+        }
+
+        let sentenceBullets = normalizedResponse
+            .replacingOccurrences(of: "(?<=[.!?])\\s+", with: "\n", options: .regularExpression)
+            .components(separatedBy: .newlines)
+            .map { Self.cleanBulletLine($0, maxCharacters: layout.maxCharactersPerBullet) }
+            .filter { !$0.isEmpty }
+
+        return Array(sentenceBullets.prefix(layout.bulletCount))
+    }
+
+    private nonisolated static func cleanBulletLine(_ rawLine: String, maxCharacters: Int) -> String {
+        let withoutMarkers = rawLine.replacingOccurrences(
+            of: #"^\s*(?:[-•*]|\d+[.)]|Zusammenfassung:|Summary:)\s*"#,
+            with: "",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        let normalized = HTMLText.normalizePreviewSpacing(in: withoutMarkers)
+        guard !normalized.isEmpty else { return "" }
+        guard normalized.count > maxCharacters else { return normalized }
+
+        let trimmedPrefix = String(normalized.prefix(max(1, maxCharacters - 3)))
+        if let lastSpace = trimmedPrefix.lastIndex(of: " ") {
+            return String(trimmedPrefix[..<lastSpace]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+        }
+        return trimmedPrefix + "…"
+    }
+
+    private func summaryCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.medium) {
+            content()
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    feedColor.opacity(0.34),
+                                    Color.white.opacity(0.14)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                }
+                .shadow(color: feedColor.opacity(0.14), radius: 20, y: 10)
+        }
+    }
+
+    private nonisolated static func message(for reason: SystemLanguageModel.Availability.UnavailableReason) -> String {
+        switch reason {
+        case .deviceNotEligible:
+            return "Apple Intelligence ist auf diesem Gerät nicht verfügbar."
+        case .appleIntelligenceNotEnabled:
+            return "Apple Intelligence ist deaktiviert. Aktiviere es in den Systemeinstellungen."
+        case .modelNotReady:
+            return "Das Modell ist noch nicht bereit. Versuche es in einem Moment erneut."
+        @unknown default:
+            return "Apple Intelligence ist auf diesem Gerät derzeit nicht verfügbar."
+        }
+    }
+
+    private nonisolated static func message(for error: LanguageModelSession.GenerationError) -> String {
+        switch error {
+        case .unsupportedLanguageOrLocale(_):
+            return "Für diese Sprache oder Region konnte keine Zusammenfassung erstellt werden."
+        case .assetsUnavailable(_):
+            return "Das lokale Modell ist im Moment nicht bereit."
+        case .exceededContextWindowSize(_):
+            return "Der Artikel ist zu umfangreich für eine kompakte lokale Zusammenfassung."
+        case .guardrailViolation(_), .refusal(_, _):
+            return "Für diesen Inhalt konnte keine Zusammenfassung erstellt werden."
+        case .concurrentRequests(_):
+            return "Die Zusammenfassung wird bereits erstellt. Bitte kurz warten."
+        case .decodingFailure(_), .unsupportedGuide(_), .rateLimited(_):
+            return error.errorDescription ?? "Die Zusammenfassung konnte nicht zuverlässig erzeugt werden."
+        @unknown default:
+            return error.errorDescription ?? "Die Zusammenfassung konnte gerade nicht erstellt werden."
+        }
+    }
 }
 
 #Preview("Feed Detail – Long Content") {

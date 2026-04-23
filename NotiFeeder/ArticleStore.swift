@@ -1,5 +1,5 @@
 // ArticleStore.swift
-// Persistent storage for articles and read-state using UserDefaults.
+// Persistent storage for articles, summaries, and read-state using UserDefaults.
 // This is a minimal, dependency-free approach and can be swapped to SwiftData later.
 
 import Foundation
@@ -18,18 +18,27 @@ public struct StoredFeedArticle: Codable, Hashable, Identifiable {
     public let feedTitle: String?
 }
 
+struct StoredArticleSummary: Codable, Hashable {
+    let sourceSignature: String
+    let summary: String
+    let updatedAt: Date
+}
+
 // MARK: - ArticleStore
 final class ArticleStore: ObservableObject {
     static let shared = ArticleStore()
 
     // Persisted keys
     private let articlesKey = FeedStorage.Keys.savedArticles
+    private let summariesKey = FeedStorage.Keys.articleSummaries
     private let readKey = FeedStorage.Keys.readArticleIDs
     private let recentlyReadKey = "recentlyReadArticleIDs"
     private let maxArticlesPerFeed = 100
+    private let maxStoredSummaries = 300
 
     // In-memory cache
     @Published private(set) var articlesByFeed: [String: [StoredFeedArticle]] = [:] // key: feed URL
+    @Published private(set) var articleSummariesByID: [String: StoredArticleSummary] = [:]
     @Published private(set) var readArticleIDs: Set<String> = []
     @Published private(set) var recentlyReadArticleIDs: Set<String> = []
 
@@ -63,6 +72,12 @@ final class ArticleStore: ObservableObject {
         } else {
             articlesByFeed = [:]
         }
+        if let data = FeedCacheSync.bestAvailableData(for: summariesKey) ?? defaults.data(forKey: summariesKey),
+           let loaded = try? decoder.decode([String: StoredArticleSummary].self, from: data) {
+            articleSummariesByID = loaded
+        } else {
+            articleSummariesByID = [:]
+        }
         // Load read-state
         if let data = FeedCacheSync.bestAvailableData(for: readKey) ?? defaults.data(forKey: readKey),
            let loaded = try? decoder.decode([String].self, from: data) {
@@ -88,8 +103,18 @@ final class ArticleStore: ObservableObject {
         }
     }
 
+    private func saveSummariesToDisk() {
+        let snapshot = articleSummariesByID
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            if let data = try? self.encoder.encode(snapshot) {
+                _ = FeedCacheSync.write(data, for: self.summariesKey)
+            }
+        }
+    }
+
     private func saveReadStateToDisk() {
-        let array = Array(readArticleIDs)
+        let array = readArticleIDs.sorted()
         queue.async { [weak self] in
             guard let self = self else { return }
             if let data = try? self.encoder.encode(array) {
@@ -102,7 +127,7 @@ final class ArticleStore: ObservableObject {
     }
 
     private func saveRecentlyReadStateToDisk() {
-        let array = Array(recentlyReadArticleIDs)
+        let array = recentlyReadArticleIDs.sorted()
         queue.async { [weak self] in
             guard let self = self else { return }
             if let data = try? self.encoder.encode(array) {
@@ -163,6 +188,33 @@ final class ArticleStore: ObservableObject {
         readArticleIDs.contains(articleID)
     }
 
+    func summary(articleID: String, matching sourceSignature: String) -> String? {
+        guard let stored = articleSummariesByID[articleID],
+              stored.sourceSignature == sourceSignature else {
+            return nil
+        }
+        return stored.summary
+    }
+
+    func saveSummary(_ summary: String, articleID: String, sourceSignature: String) {
+        let trimmedSummary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSummary.isEmpty else { return }
+
+        if let existing = articleSummariesByID[articleID],
+           existing.sourceSignature == sourceSignature,
+           existing.summary == trimmedSummary {
+            return
+        }
+
+        articleSummariesByID[articleID] = StoredArticleSummary(
+            sourceSignature: sourceSignature,
+            summary: trimmedSummary,
+            updatedAt: Date()
+        )
+        trimStoredSummariesIfNeeded()
+        saveSummariesToDisk()
+    }
+
     // MARK: Recently Read Articles
     /// Tracks articles that should continue to appear in the unread flow
     /// until a real refresh promotes them to permanently read.
@@ -206,5 +258,17 @@ final class ArticleStore: ObservableObject {
         }
 
         cloudSyncObservers = [readObserver]
+    }
+
+    private func trimStoredSummariesIfNeeded() {
+        guard articleSummariesByID.count > maxStoredSummaries else { return }
+
+        let retainedEntries = articleSummariesByID
+            .sorted { lhs, rhs in
+                lhs.value.updatedAt > rhs.value.updatedAt
+            }
+            .prefix(maxStoredSummaries)
+
+        articleSummariesByID = Dictionary(uniqueKeysWithValues: retainedEntries.map { ($0.key, $0.value) })
     }
 }

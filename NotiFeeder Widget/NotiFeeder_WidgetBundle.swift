@@ -14,6 +14,7 @@ struct NotiFeeder_WidgetBundle: WidgetBundle {
         NotiFeeder_Widget_Small()
         NotiFeeder_Widget_Medium()
         NotiFeeder_Widget_Large()
+        NotiFeeder_Widget_LockScreenRectangular()
         NotiFeeder_WidgetControl()
     }
 }

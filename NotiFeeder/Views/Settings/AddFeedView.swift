@@ -136,7 +136,8 @@ struct AddFeedView: View {
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.title3.weight(.semibold))
+                            .font(.title3)
+                            .fontWeight(.light)
                     }
                     .minimumHitTarget()
                     .tint(theme.uiAccentColor)
@@ -146,9 +147,4 @@ struct AddFeedView: View {
         }
         .tint(theme.uiAccentColor)
     }
-}
-
-#Preview {
-        AddFeedView(onSave: { _, _ in })
-            .environmentObject(ThemeSettings())
 }

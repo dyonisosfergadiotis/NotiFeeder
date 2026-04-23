@@ -9,7 +9,6 @@ import SwiftData
 struct NotiFeederApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var theme = ThemeSettings()
-    private let watchSyncManager = PhoneWatchSyncManager.shared
 
     var body: some Scene {
         WindowGroup {
@@ -17,9 +16,6 @@ struct NotiFeederApp: App {
                 .environmentObject(ArticleStore.shared)
                 .environmentObject(theme)
                 .tint(theme.uiAccentColor)
-                .onAppear {
-                    watchSyncManager.activateSessionIfNeeded()
-                }
         }
         .modelContainer(for: FeedEntryModel.self)
     }
@@ -28,6 +24,9 @@ struct NotiFeederApp: App {
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
+        FeedBackgroundRefreshManager.registerIfNeeded()
+        FeedBackgroundRefreshManager.scheduleNext()
+
         Task { @MainActor in
             FeedICloudSyncManager.shared.configureIfNeeded()
         }
@@ -41,8 +40,34 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ application: UIApplication) {
+        FeedBackgroundRefreshManager.scheduleNext()
+
         Task { @MainActor in
             FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
+        }
+    }
+
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        FeedBackgroundRefreshManager.scheduleNext()
+    }
+
+    func application(_ application: UIApplication,
+                     performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        Task {
+            let result = await FeedBackgroundRefreshManager.performBackgroundFetch()
+            if result.wasCancelled {
+                completionHandler(.failed)
+                return
+            }
+            if result.didWriteCache {
+                completionHandler(.newData)
+                return
+            }
+            if result.successfulFeeds > 0 {
+                completionHandler(.noData)
+                return
+            }
+            completionHandler(.failed)
         }
     }
 }

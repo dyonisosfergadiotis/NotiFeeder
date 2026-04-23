@@ -15,9 +15,9 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "E590BE782F436B4C000F2FDC"
-               BuildableName = "NotiFeeder AW.app"
-               BlueprintName = "NotiFeeder AW"
+               BlueprintIdentifier = "E59E77202F8658A0006A872F"
+               BuildableName = "NotiFeeder Watch App.app"
+               BlueprintName = "NotiFeeder Watch App"
                ReferencedContainer = "container:NotiFeeder.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -44,9 +44,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E590BE782F436B4C000F2FDC"
-            BuildableName = "NotiFeeder AW.app"
-            BlueprintName = "NotiFeeder AW"
+            BlueprintIdentifier = "E59E77202F8658A0006A872F"
+            BuildableName = "NotiFeeder Watch App.app"
+            BlueprintName = "NotiFeeder Watch App"
             ReferencedContainer = "container:NotiFeeder.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -61,9 +61,9 @@
          runnableDebuggingMode = "0">
          <BuildableReference
             BuildableIdentifier = "primary"
-            BlueprintIdentifier = "E590BE782F436B4C000F2FDC"
-            BuildableName = "NotiFeeder AW.app"
-            BlueprintName = "NotiFeeder AW"
+            BlueprintIdentifier = "E59E77202F8658A0006A872F"
+            BuildableName = "NotiFeeder Watch App.app"
+            BlueprintName = "NotiFeeder Watch App"
             ReferencedContainer = "container:NotiFeeder.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>

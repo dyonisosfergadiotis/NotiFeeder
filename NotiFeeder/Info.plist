@@ -15,9 +15,19 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>de.DyonisosFergadiotis.NotiFeeder.feedRefresh</string>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>NotiFeeder benötigt Zugriff auf die Kamera, damit du ein Profilbild aufnehmen kannst.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>NotiFeeder benötigt Zugriff auf deine Fotos, damit du ein Homescreen-Screenshot für transparente Widgets auswählen kannst.</string>
+	<string>NotiFeeder benötigt Zugriff auf deine Fotos, damit du ein Profilbild oder einen Homescreen-Screenshot auswählen kannst.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 </dict>
 </plist>

@@ -5,6 +5,9 @@ import SwiftData
 import Network
 import QuartzCore
 import UIKit
+#if canImport(WidgetKit)
+import WidgetKit
+#endif
 
 struct ContentView: View {
     @AppStorage("savedFeeds", store: FeedStorage.defaults) private var savedFeedsData: Data = Data()
@@ -149,9 +152,31 @@ struct ContentView: View {
 
 private struct FeedScrollMetrics: Equatable {
     let distanceFromTop: CGFloat
+    let scrollableDistance: CGFloat
 }
 
 struct FeedListView: View {
+    private struct DaySectionEntry: Identifiable {
+        let entry: FeedEntry
+        let index: Int
+
+        var id: String { entry.id }
+    }
+
+    private struct DaySection: Identifiable {
+        let id: String
+        let title: String
+        let entries: [DaySectionEntry]
+    }
+
+    private static let daySectionDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }()
+
     @Binding var feeds: [FeedSource]
     @Binding var savedFeedsData: Data
     @Binding var showSettingsSheet: Bool
@@ -163,9 +188,9 @@ struct FeedListView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.modelContext) private var modelContext
-    @AppStorage("cachedEntries") private var cachedEntriesData: Data = Data()
+    @AppStorage(FeedStorage.Keys.cachedEntries, store: FeedStorage.defaults) private var cachedEntriesData: Data = Data()
+    @AppStorage(UserProfileStore.avatarImageDataKey) private var profileAvatarData: Data = Data()
     
-    @AppStorage("ui.cards.previewLines") private var previewLines: Int = 3
     @AppStorage("ui.cards.style.fullColor") private var fullColorCards: Bool = false
     
     @FocusState private var isToolbarSearchFocused: Bool
@@ -188,14 +213,22 @@ struct FeedListView: View {
     @State private var refreshTask: Task<Void, Never>? = nil
     @State private var feedsReloadTask: Task<Void, Never>? = nil
     @State private var statusBarRefreshTask: Task<Void, Never>? = nil
+    @State private var widgetTimelineReloadTask: Task<Void, Never>? = nil
     @State private var lastRefreshDate: Date? = nil
     @State private var bookmarkedLinks: Set<String> = []
-    @State private var listAppearToken = UUID()
+    @State private var pendingInsertedEntryIDs: Set<String> = []
+    @State private var insertionAnimationCleanupTask: Task<Void, Never>? = nil
     @State private var showBackToTopToolbarButton = false
     @State private var scrollToTopRequestToken = 0
     @State private var lastObservedScrollDistanceFromTop: CGFloat = 0
     @State private var topChromeHidden = false
     @State private var isSearchBarExpanded = false
+    @State private var renderedEntryLimit: Int = 0
+    @State private var lastRenderContextKey: String = ""
+    @State private var didPrepareDerivedFeedState = false
+    @State private var cachedFeedLookupMaps = FeedLookupMaps.empty
+    @State private var cachedVisibleEntries: [FeedEntry] = []
+    @State private var cachedFeedPillFeeds: [FeedSource] = []
     
     // New states for launch screen overlay
     @State private var showLaunchScreen: Bool = true
@@ -218,6 +251,14 @@ struct FeedListView: View {
     private let maxArticlesPerFeed = 100
     private let backToTopVisibilityThreshold: CGFloat = 60
     private let topChromeScrollDeltaThreshold: CGFloat = 14
+    private let scrollMetricsUpdateDistanceThreshold: CGFloat = 12
+    private let initialCardAppearanceAnimationCount: Int = 12
+    private let initialRenderBatchSize: Int = 60
+    private let renderBatchSize: Int = 40
+    private let renderPrefetchThreshold: Int = 16
+    private let launchScreenSafetyAutoHideDelay: TimeInterval = 0.12
+    private let launchScreenMinimumVisibleDuration: TimeInterval = 0
+    private let launchScreenHideAnimationDuration: TimeInterval = 0.16
 
     private var recentlyReadLinks: Set<String> {
         store.recentlyReadArticleIDs
@@ -226,19 +267,21 @@ struct FeedListView: View {
     private var showsSearchCloseButton: Bool {
         isSearchBarExpanded || isToolbarSearchFocused || !searchText.isEmpty
     }
-    
-    private var sortIconName: String {
-        sortOption == "Neueste zuerst" ? "arrow.down" : "arrow.up"
-    }
-    
+
     private func sortAllEntriesGlobally() {
+        let sortedEntries = sortedAndLimitedEntries(entries)
+        guard sortedEntries != entries else { return }
+        entries = sortedEntries
+    }
+
+    private func sortedAndLimitedEntries(_ sourceEntries: [FeedEntry]) -> [FeedEntry] {
         var dateByLink: [String: Date] = [:]
-        dateByLink.reserveCapacity(entries.count)
-        for entry in entries {
-            dateByLink[entry.link] = DateParser.parse(entry.pubDateString)
+        dateByLink.reserveCapacity(sourceEntries.count)
+        for entry in sourceEntries {
+            dateByLink[entry.link] = entry.parsedPubDate ?? .distantPast
         }
 
-        let sortedEntries: [FeedEntry] = entries.sorted { lhs, rhs in
+        let sortedEntries: [FeedEntry] = sourceEntries.sorted { lhs, rhs in
             let ld = dateByLink[lhs.link] ?? .distantPast
             let rd = dateByLink[rhs.link] ?? .distantPast
             switch sortOption {
@@ -250,8 +293,7 @@ struct FeedListView: View {
         }
 
         guard maxArticlesPerFeed > 0 else {
-            entries = sortedEntries
-            return
+            return sortedEntries
         }
         
         var feedCount: [String: Int] = [:]
@@ -265,7 +307,7 @@ struct FeedListView: View {
             }
         }
         
-        entries = limitedEntries
+        return limitedEntries
     }
     
     private enum FeedFilterSelection {
@@ -291,23 +333,65 @@ struct FeedListView: View {
         return currentSelection
     }
 
-    private var areAllFeedsSelected: Bool {
-        let availableIDs = validFeedIDs
-        return !availableIDs.isEmpty && resolvedSelectedFeedIDs == availableIDs
+    private var feedPillFeeds: [FeedSource] {
+        if didPrepareDerivedFeedState {
+            return cachedFeedPillFeeds
+        }
+        return computeFeedPillFeeds(using: effectiveFeedLookupMaps)
     }
     
     private func feedListView(for selectedFeedID: String) -> some View {
-        let visibleEntries = filteredEntries(for: selectedFeedID)
-        let lookup = feedLookupMaps
+        let lookup = effectiveFeedLookupMaps
+        let visibleEntries = visibleEntriesForDisplay(selectedFeedID: selectedFeedID, lookup: lookup)
+        let renderContextKey = renderContextKey(for: selectedFeedID)
+        let effectiveLimit = effectiveRenderedEntryLimit(totalVisibleCount: visibleEntries.count)
+        let displayedEntries = Array(visibleEntries.prefix(effectiveLimit))
+        let hasMoreEntries = effectiveLimit < visibleEntries.count
+        let daySections = daySections(for: displayedEntries)
+
         return ScrollViewReader { scrollProxy in
             ZStack(alignment: .top) {
                 List {
-                    ForEach(Array(visibleEntries.enumerated()), id: \.element.id) { index, entry in
-                        trackedEntryRow(
-                            for: entry,
-                            index: index,
-                            lookup: lookup
-                        )
+                    ForEach(daySections) { section in
+                        Section {
+                            if section.title != "Heute" {
+                                daySectionDividerRow(title: section.title)
+                                    .listRowSeparator(.hidden)
+                                    .listRowBackground(Color.clear)
+                            }
+
+                            ForEach(section.entries) { dayEntry in
+                                trackedEntryRow(
+                                    for: dayEntry.entry,
+                                    index: dayEntry.index,
+                                    lookup: lookup
+                                )
+                                .onAppear {
+                                    loadMoreEntriesIfNeeded(
+                                        currentIndex: dayEntry.index,
+                                        totalVisibleCount: visibleEntries.count
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if visibleEntries.isEmpty {
+                        Color.clear
+                            .frame(height: 140)
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                            .accessibilityHidden(true)
+                    }
+
+                    if hasMoreEntries {
+                        feedListLoadingRow
+                            .onAppear {
+                                loadMoreEntriesIfNeeded(
+                                    currentIndex: max(0, effectiveLimit - 1),
+                                    totalVisibleCount: visibleEntries.count
+                                )
+                            }
                     }
                 }
                 .scrollIndicators(.hidden)
@@ -338,6 +422,7 @@ struct FeedListView: View {
                             store.setRead(true, articleID: link)
                             if let idx = entries.firstIndex(where: { $0.link == link }) {
                                 entries[idx].isRead = true
+                                entries[idx].isNew = false
                             }
                         }
                         store.clearRecentlyRead()
@@ -347,16 +432,39 @@ struct FeedListView: View {
                 }
                 .scrollContentBackground(.hidden)
                 .listStyle(.plain)
-                .listRowSpacing(6)
-                .animation(.easeInOut(duration: 0.2), value: visibleEntries.map(\.id))
+                //.listRowSpacing(6)
+                .onAppear {
+                    refreshRenderedEntryLimitIfNeeded(
+                        contextKey: renderContextKey,
+                        totalVisibleCount: visibleEntries.count
+                    )
+                }
+                .onChange(of: renderContextKey) { _, newContextKey in
+                    resetRenderedEntryLimit(
+                        contextKey: newContextKey,
+                        totalVisibleCount: visibleEntries.count
+                    )
+                }
+                .onChange(of: visibleEntries.count) { _, newCount in
+                    clampRenderedEntryLimit(totalVisibleCount: newCount)
+                }
                 .onScrollGeometryChange(
                     for: FeedScrollMetrics.self,
                     of: { geometry in
-                        FeedScrollMetrics(
-                            distanceFromTop: max(0, geometry.contentOffset.y + geometry.contentInsets.top)
+                        let distanceFromTop = max(0, geometry.contentOffset.y + geometry.contentInsets.top)
+                        let scrollableDistance = max(
+                            0,
+                            geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom - geometry.containerSize.height
+                        )
+                        return FeedScrollMetrics(
+                            distanceFromTop: distanceFromTop,
+                            scrollableDistance: scrollableDistance
                         )
                     },
-                    action: { _, newMetrics in
+                    action: { oldMetrics, newMetrics in
+                        guard shouldProcessScrollMetricsChange(from: oldMetrics, to: newMetrics) else {
+                            return
+                        }
                         handleScrollMetricsChange(newMetrics)
                     }
                 )
@@ -371,8 +479,8 @@ struct FeedListView: View {
                         scrollProxy.scrollTo(firstEntryID, anchor: .top)
                     }
                 }
-                .onChange(of: visibleEntries.map(\.id)) { _, ids in
-                    if ids.isEmpty {
+                .onChange(of: visibleEntries.isEmpty) { _, isEmpty in
+                    if isEmpty {
                         showBackToTopToolbarButton = false
                         topChromeHidden = false
                         lastObservedScrollDistanceFromTop = 0
@@ -390,6 +498,94 @@ struct FeedListView: View {
         }
     }
 
+    private func daySections(for entries: [FeedEntry]) -> [DaySection] {
+        guard !entries.isEmpty else { return [] }
+
+        var sections: [DaySection] = []
+        var currentKey: String?
+        var currentTitle = ""
+        var currentEntries: [DaySectionEntry] = []
+
+        for (index, entry) in entries.enumerated() {
+            let sectionEntry = DaySectionEntry(entry: entry, index: index)
+            let keyDate = dayBucketDate(for: entry)
+            let key = keyDate.map { String($0.timeIntervalSinceReferenceDate) } ?? "__no_date__"
+            let title = daySectionTitle(for: keyDate)
+
+            if currentKey != key {
+                if let currentKey {
+                    sections.append(DaySection(id: currentKey, title: currentTitle, entries: currentEntries))
+                }
+                currentKey = key
+                currentTitle = title
+                currentEntries = [sectionEntry]
+            } else {
+                currentEntries.append(sectionEntry)
+            }
+        }
+
+        if let currentKey {
+            sections.append(DaySection(id: currentKey, title: currentTitle, entries: currentEntries))
+        }
+
+        return sections
+    }
+
+    private func dayBucketDate(for entry: FeedEntry) -> Date? {
+        let date = entryDate(for: entry)
+        guard date != .distantPast else { return nil }
+        return Calendar.current.startOfDay(for: date)
+    }
+
+    private func daySectionTitle(for day: Date?) -> String {
+        guard let day else { return "Ohne Datum" }
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) {
+            return "Heute"
+        }
+        if calendar.isDateInYesterday(day) {
+            return "Gestern"
+        }
+        return Self.daySectionDateFormatter.string(from: day)
+    }
+
+    @ViewBuilder
+    private func daySectionDividerRow(title: String) -> some View {
+        HStack(spacing: 10) {
+            Rectangle()
+                .fill(theme.uiAccentColor.opacity(0.3))
+                .frame(height: 1)
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(theme.uiAccentColor.opacity(0.3))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Rectangle()
+                .fill(theme.uiAccentColor.opacity(0.3))
+                .frame(height: 1)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 1)
+        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+    }
+
+    private var feedListLoadingRow: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Weitere Artikel werden geladen …")
+                .font(.caption)
+                .foregroundStyle(Color.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
+    }
+
     @ViewBuilder
     private func trackedEntryRow(for entry: FeedEntry, index: Int, lookup: FeedLookupMaps) -> some View {
         entryRow(for: entry, index: index, lookup: lookup)
@@ -397,7 +593,8 @@ struct FeedListView: View {
 
     private func handleScrollMetricsChange(_ metrics: FeedScrollMetrics) {
         let distanceFromTop = metrics.distanceFromTop
-        let shouldShowButton = distanceFromTop > backToTopVisibilityThreshold
+        let canShowBackToTopButton = metrics.scrollableDistance > backToTopVisibilityThreshold
+        let shouldShowButton = canShowBackToTopButton && distanceFromTop > backToTopVisibilityThreshold
         if shouldShowButton != showBackToTopToolbarButton {
             withAnimation(.easeInOut(duration: 0.18)) {
                 showBackToTopToolbarButton = shouldShowButton
@@ -423,6 +620,89 @@ struct FeedListView: View {
 
         lastObservedScrollDistanceFromTop = distanceFromTop
     }
+
+    private func shouldProcessScrollMetricsChange(from oldMetrics: FeedScrollMetrics,
+                                                  to newMetrics: FeedScrollMetrics) -> Bool {
+        let oldDistance = oldMetrics.distanceFromTop
+        let newDistance = newMetrics.distanceFromTop
+
+        let oldCanShowBackToTopButton = oldMetrics.scrollableDistance > backToTopVisibilityThreshold
+        let newCanShowBackToTopButton = newMetrics.scrollableDistance > backToTopVisibilityThreshold
+        if oldCanShowBackToTopButton != newCanShowBackToTopButton {
+            return true
+        }
+
+        if abs(newDistance - oldDistance) >= scrollMetricsUpdateDistanceThreshold {
+            return true
+        }
+
+        let oldNearTop = oldDistance <= 8
+        let newNearTop = newDistance <= 8
+        if oldNearTop != newNearTop {
+            return true
+        }
+
+        let oldPastBackToTopThreshold = oldCanShowBackToTopButton && oldDistance > backToTopVisibilityThreshold
+        let newPastBackToTopThreshold = newCanShowBackToTopButton && newDistance > backToTopVisibilityThreshold
+        return oldPastBackToTopThreshold != newPastBackToTopThreshold
+    }
+
+    private func renderContextKey(for selectedFeedID: String) -> String {
+        let feedSelectionKey = resolvedSelectedFeedIDs.sorted().joined(separator: ",")
+        let quickFilterKey = activeQuickFilter?.rawValue ?? "all"
+        let searchKey = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return [selectedFeedID, feedSelectionKey, quickFilterKey, searchKey].joined(separator: "|")
+    }
+
+    private func effectiveRenderedEntryLimit(totalVisibleCount: Int) -> Int {
+        guard totalVisibleCount > 0 else { return 0 }
+        let seededLimit = renderedEntryLimit <= 0 ? initialRenderBatchSize : renderedEntryLimit
+        return min(totalVisibleCount, max(1, seededLimit))
+    }
+
+    private func refreshRenderedEntryLimitIfNeeded(contextKey: String, totalVisibleCount: Int) {
+        if lastRenderContextKey != contextKey {
+            resetRenderedEntryLimit(contextKey: contextKey, totalVisibleCount: totalVisibleCount)
+            return
+        }
+        clampRenderedEntryLimit(totalVisibleCount: totalVisibleCount)
+    }
+
+    private func resetRenderedEntryLimit(contextKey: String, totalVisibleCount: Int) {
+        lastRenderContextKey = contextKey
+        renderedEntryLimit = min(totalVisibleCount, initialRenderBatchSize)
+    }
+
+    private func clampRenderedEntryLimit(totalVisibleCount: Int) {
+        if totalVisibleCount <= 0 {
+            renderedEntryLimit = 0
+            return
+        }
+
+        if renderedEntryLimit <= 0 {
+            renderedEntryLimit = min(totalVisibleCount, initialRenderBatchSize)
+            return
+        }
+
+        if renderedEntryLimit > totalVisibleCount {
+            renderedEntryLimit = totalVisibleCount
+        }
+    }
+
+    private func loadMoreEntriesIfNeeded(currentIndex: Int, totalVisibleCount: Int) {
+        guard totalVisibleCount > 0 else { return }
+
+        let currentLimit = effectiveRenderedEntryLimit(totalVisibleCount: totalVisibleCount)
+        guard currentLimit < totalVisibleCount else { return }
+
+        let triggerIndex = max(0, currentLimit - renderPrefetchThreshold)
+        guard currentIndex >= triggerIndex else { return }
+
+        let expandedLimit = min(totalVisibleCount, currentLimit + renderBatchSize)
+        guard expandedLimit != renderedEntryLimit else { return }
+
+        renderedEntryLimit = expandedLimit
+    }
     
     private func EmptyEntriesOverlay(isEmpty: Bool) -> some View {
         Group {
@@ -433,6 +713,7 @@ struct FeedListView: View {
                 }
                 .padding(.horizontal, 32)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                 .animation(.easeInOut(duration: 0.2), value: isEmpty)
             } else {
@@ -443,10 +724,9 @@ struct FeedListView: View {
     
     var body: some View {
         ZStack {
+            mainContentView
             if showLaunchScreen {
                 launchScreenView
-            } else {
-                mainContentView
             }
         }
     }
@@ -465,14 +745,15 @@ struct FeedListView: View {
             .padding(.horizontal, 24)
         }
         .transition(.opacity)
-        .task {
-            // Safety auto-hide: if no loading path hides the overlay, hide after 0.75s
-            try? await Task.sleep(nanoseconds: 750_000_000)
-            if showLaunchScreen {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    showLaunchScreen = false
-                }
+        .onAppear {
+            if launchScreenShownAt == nil {
+                launchScreenShownAt = Date()
             }
+        }
+        .task {
+            // Safety auto-hide: if no loading path hides the overlay, hide promptly.
+            try? await Task.sleep(nanoseconds: UInt64(launchScreenSafetyAutoHideDelay * 1_000_000_000))
+            hideLaunchScreenIfNeeded()
         }
     }
 
@@ -489,51 +770,134 @@ struct FeedListView: View {
     }
 
     private var mainContentView: some View {
-        NavigationStack(path: $path) {
+        let navigationView = NavigationStack(path: $path) {
             feedListView(for: activeFeedTabID)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { feedToolbar }
-            .toolbarBackground(.hidden, for: .navigationBar)
-        .sheet(item: $feedToEdit, onDismiss: {
-            feedToEdit = nil
-        }) { feed in
-            EditSingleFeedView(feed: feed, initialColor: theme.color(for: feed.url)) { updated in
-                guard let updated = updated else { return }
-                updateFeed(original: feed, updated: updated)
-            }
-            .environmentObject(theme)
-            .presentationDetents([UIStylePolicy.Sheet.compactDetent])
-            .presentationBackground(.clear)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { feedToolbar }
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .sheet(item: $feedToEdit, onDismiss: {
+                    feedToEdit = nil
+                }) { feed in
+                    EditSingleFeedView(feed: feed, initialColor: theme.color(for: feed.url)) { updated in
+                        guard let updated = updated else { return }
+                        updateFeed(original: feed, updated: updated)
+                    }
+                    .environmentObject(theme)
+                    .presentationDetents([.fraction(0.6)])
+                    .presentationBackground(.clear)
+                }
+                .navigationDestination(for: FeedEntry.self) { entry in
+                    navigationDestinationView(entry)
+                }
         }
-            .navigationDestination(for: FeedEntry.self) { entry in
-                navigationDestinationView(entry)
+
+        let contentWithStateObservers = navigationView
+            .onAppear {
+                refreshDerivedFeedState()
+                if !didRestoreCachedEntries {
+                    didRestoreCachedEntries = true
+                    restoreCachedEntries()
+                }
+                if lastRefreshDate == nil {
+                    lastRefreshDate = FeedRefreshState.lastSuccessfulRefreshDate()
+                }
+                normalizeSelectedFeedIDs()
+                persistWidgetSelectionContext()
+                triggerInitialLoadIfPossible()
+                pruneEntriesForRemovedFeeds()
+                Task { @MainActor in
+                    syncCloudStateFromICloud()
+                }
+                pushSnapshotToWatch()
             }
-        }
-        .onAppear {
-            if !didRestoreCachedEntries {
-                didRestoreCachedEntries = true
+            .onChange(of: feeds) { _, newValue in
+                normalizeSelectedFeedIDs(using: newValue)
+                persistWidgetSelectionContext()
+                scheduleWidgetTimelineReload()
+                refreshDerivedFeedState()
+            }
+            .onChange(of: selectedFeedIDs) { _, _ in
+                persistWidgetSelectionContext()
+                scheduleWidgetTimelineReload()
+                refreshDerivedFeedState()
+            }
+            .onChange(of: networkState.isOffline) { _, isOffline in
+                guard isOffline else { return }
+                completeInitialFeedLoad()
+            }
+            .onChange(of: showOnlyBookmarks) { _, _ in
+                persistWidgetSelectionContext()
+                scheduleWidgetTimelineReload()
+                refreshDerivedFeedState()
+            }
+            .onChange(of: store.readArticleIDs) { oldValue, newValue in
+                applyReadStateFromStore()
+                persistEntriesCache()
+                pushSnapshotToWatch()
+                let shouldReload = shouldReloadWidgetForReadStateChange(
+                    from: oldValue,
+                    to: newValue
+                )
+                if shouldReload {
+                    scheduleWidgetTimelineReload()
+                }
+                refreshDerivedFeedState()
+            }
+            .onChange(of: showUnreadOnly) { _, _ in
+                persistWidgetSelectionContext()
+                scheduleWidgetTimelineReload()
+                refreshDerivedFeedState()
+            }
+            .onChange(of: showTodayOnly) { _, _ in
+                persistWidgetSelectionContext()
+                scheduleWidgetTimelineReload()
+                refreshDerivedFeedState()
+            }
+            .onChange(of: entries) { _, _ in
+                refreshDerivedFeedState()
+            }
+            .onChange(of: searchText) { _, _ in
+                refreshDerivedFeedState()
+            }
+            .onChange(of: activeFeedTabID) { _, _ in
+                refreshDerivedFeedState()
+            }
+            .onChange(of: bookmarkedLinks) { _, _ in
+                refreshDerivedFeedState()
+            }
+            .onChange(of: store.recentlyReadArticleIDs) { _, _ in
+                refreshDerivedFeedState()
+            }
+
+        return contentWithStateObservers
+            .onReceive(NotificationCenter.default.publisher(for: .feedBookmarkedArticleIDsDidSyncFromICloud)) { _ in
+                Task { @MainActor in
+                    BookmarkService.syncBookmarksFromCloudIfNeeded(context: modelContext)
+                    refreshBookmarkedLinks()
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .feedCachedEntriesDidRefresh)) { _ in
                 restoreCachedEntries()
             }
-            normalizeSelectedFeedIDs()
-            triggerInitialLoadIfPossible()
-            pruneEntriesForRemovedFeeds()
-            Task { @MainActor in
-                syncCloudStateFromICloud()
+            .onChange(of: scenePhase) { _, newPhase in
+                guard newPhase == .active else { return }
+                restoreCachedEntries()
+                Task { @MainActor in
+                    await refreshOnAppActivationIfNeeded()
+                }
             }
-            pushSnapshotToWatch()
-            
-            if showLaunchScreen && launchScreenShownAt == nil {
-                launchScreenShownAt = Date()
+            .onOpenURL { url in
+                Task { @MainActor in
+                    handleDeepLink(url)
+                }
             }
-        }
-        .onChange(of: feeds) { _, newValue in
-            normalizeSelectedFeedIDs(using: newValue)
-        }
-        .onDisappear {
-            refreshTask?.cancel()
-            feedsReloadTask?.cancel()
-            statusBarRefreshTask?.cancel()
-        }
+            .onDisappear {
+                refreshTask?.cancel()
+                feedsReloadTask?.cancel()
+                statusBarRefreshTask?.cancel()
+                widgetTimelineReloadTask?.cancel()
+                insertionAnimationCleanupTask?.cancel()
+            }
     }
     
     private var isAtTopOfFeedList: Bool {
@@ -541,35 +905,42 @@ struct FeedListView: View {
     }
 
     private var showsFeedSegmentedPicker: Bool {
-        feeds.count > 1
+        feeds.count > 1 && !feedPillFeeds.isEmpty
     }
 
     private var segmentedPickerFeeds: some View {
-        let allFeedTints = feeds.map { theme.color(for: $0.url) }
+        let visibleFeeds = feedPillFeeds
+        let visibleFeedIDs = Set(visibleFeeds.map(\.id))
+        let allFeedTints = visibleFeeds.map { theme.color(for: $0.url) }
+        let shouldShowAllPill = visibleFeeds.count >= 2
+        let allPillIsActive = !visibleFeedIDs.isEmpty && resolvedSelectedFeedIDs.isSuperset(of: visibleFeedIDs)
         let shouldHideTopChrome = topChromeHidden || !isAtTopOfFeedList
+        let feedPillIndexOffset = shouldShowAllPill ? 1 : 0
 
         return HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 GlassEffectContainer(spacing: 10) {
                     HStack(spacing: 8) {
-                        FeedSegmentPill(
-                            title: "Alle",
-                            tints: allFeedTints.isEmpty ? [theme.uiAccentColor] : allFeedTints,
-                            isActive: areAllFeedsSelected,
-                            useFullColorBackground: fullColorCards
-                        ) {
-                            withAnimation(UIStylePolicy.Motion.standardEase) {
-                                toggleAllFeedSelection()
+                        if shouldShowAllPill {
+                            FeedSegmentPill(
+                                title: "Alle",
+                                tints: allFeedTints.isEmpty ? [theme.uiAccentColor] : allFeedTints,
+                                isActive: allPillIsActive,
+                                useFullColorBackground: fullColorCards
+                            ) {
+                                withAnimation(UIStylePolicy.Motion.standardEase) {
+                                    toggleAllFeedSelection(for: visibleFeedIDs)
+                                }
                             }
-                        }
-                        .modifier(
-                            FeedPillStackingModifier(
-                                index: 0,
-                                isCollapsed: shouldHideTopChrome
+                            .modifier(
+                                FeedPillStackingModifier(
+                                    index: 0,
+                                    isCollapsed: shouldHideTopChrome
+                                )
                             )
-                        )
+                        }
 
-                        ForEach(Array(feeds.enumerated()), id: \.element.id) { index, feed in
+                        ForEach(Array(visibleFeeds.enumerated()), id: \.element.id) { index, feed in
                             FeedSegmentPill(
                                 title: feedDisplayTitle(for: feed),
                                 tints: [theme.color(for: feed.url)],
@@ -582,7 +953,7 @@ struct FeedListView: View {
                             }
                             .modifier(
                                 FeedPillStackingModifier(
-                                    index: index + 1,
+                                    index: index + feedPillIndexOffset,
                                     isCollapsed: shouldHideTopChrome
                                 )
                             )
@@ -594,11 +965,6 @@ struct FeedListView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .offset(x: shouldHideTopChrome ? -12 : 0)
-
-            filterMenuButton()
-                .padding(.trailing, 16)
-                .offset(x: shouldHideTopChrome ? 96 : 0)
-                .opacity(shouldHideTopChrome ? 0 : 1)
         }
         .padding(.top, 2)
         .allowsHitTesting(!shouldHideTopChrome)
@@ -619,56 +985,42 @@ struct FeedListView: View {
         }*/
     }
 
-    private var hasActiveQuickFilter: Bool {
-        activeQuickFilter != nil
-    }
-
-    private var quickFilterBaseEntries: [FeedEntry] {
-        entriesMatchingSelection(for: activeFeedTabID, includeSearch: true)
-    }
-
-    private var bookmarkQuickFilterCount: Int {
-        quickFilterBaseEntries.filter { bookmarkedLinks.contains($0.link) }.count
-    }
-
-    private var unreadQuickFilterCount: Int {
-        quickFilterBaseEntries.filter { !$0.isRead || recentlyReadLinks.contains($0.link) }.count
-    }
-
-    private var todayQuickFilterCount: Int {
-        let calendar = Calendar.current
-        return quickFilterBaseEntries.filter { entry in
-            let publishedDate = DateParser.parse(entry.pubDateString)
-            return publishedDate != .distantPast && calendar.isDateInToday(publishedDate)
-        }.count
-    }
-
     @ToolbarContentBuilder
     private var feedToolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            Text("Feed")
-                .font(.headline)
+            VStack(spacing: 1) {
+                Text("Feed")
+                    .font(.headline)
+                if networkState.isOffline {
+                    Text("Offline")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
-        
-        
+
         ToolbarItem(placement: .bottomBar) {
             Group {
                 if isSearchBarExpanded {
                     HStack(spacing: 8) {
                         Image(systemName: "magnifyingglass")
+                            .fontWeight(.light)
                             .foregroundStyle(theme.uiAccentColor)
                             .padding(.leading, 10)
+
                         TextField("Artikel suchen", text: $searchText)
                             .focused($isToolbarSearchFocused)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                             .submitLabel(.search)
                             .tint(theme.uiAccentColor)
+
                         if !searchText.isEmpty {
                             Button {
                                 searchText = ""
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
+                                    .fontWeight(.light)
                                     .foregroundStyle(iconTint(active: true))
                             }
                             .padding(.trailing, 10)
@@ -688,7 +1040,8 @@ struct FeedListView: View {
                         }
                     } label: {
                         Image(systemName: "magnifyingglass")
-                            .font(.body.weight(.semibold))
+                            .font(.body)
+                            .fontWeight(.light)
                             .foregroundStyle(theme.uiAccentColor)
                     }
                     .buttonStyle(.plain)
@@ -699,16 +1052,16 @@ struct FeedListView: View {
             }
             .animation(.easeInOut(duration: 0.2), value: isSearchBarExpanded)
         }
-        
+
         ToolbarSpacer(.flexible, placement: .bottomBar)
         if showsSearchCloseButton {
-            
             ToolbarItem(placement: .bottomBar) {
                 Button {
                     clearAndDismissSearch()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.body.weight(.semibold))
+                        .font(.body)
+                        .fontWeight(.light)
                         .foregroundStyle(theme.uiAccentColor)
                 }
                 .buttonStyle(.plain)
@@ -722,7 +1075,8 @@ struct FeedListView: View {
                     scrollToTopRequestToken += 1
                 } label: {
                     Image(systemName: "arrow.up.to.line")
-                        .font(.body.weight(.semibold))
+                        .font(.body)
+                        .fontWeight(.light)
                         .foregroundStyle(theme.uiAccentColor)
                 }
                 .minimumHitTarget()
@@ -740,56 +1094,40 @@ struct FeedListView: View {
                 )
             }
         }
-    
-        
+
         ToolbarItemGroup(placement: .topBarLeading) {
             Button {
                 showSettingsSheet = true
             } label: {
-                Image(systemName: "gear")
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(theme.uiAccentColor)
+                if let avatarImage = settingsAvatarImage {
+                    Image(uiImage: avatarImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 36 , height: 36)
+                        .clipShape(Circle())
+                        //.overlay {
+                        //    Circle()
+                       //         .stroke(theme.uiAccentColor.opacity(0.35), lineWidth: 1)
+                       // }
+                } else {
+                    Image(systemName: "gear")
+                        .fontWeight(.light)
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(theme.uiAccentColor)
+                }
             }
+            .buttonStyle(.plain)
             .minimumHitTarget()
             .accessibilityLabel("Einstellungen")
         }
-        
-        
-        
-        // Gruppe 2: Filter + Menü
+
+        // Gruppe 2: Filter + Sortierung
         ToolbarSpacer(.fixed,placement: .topBarTrailing)
-        ToolbarItem(placement: .topBarTrailing){
-            Menu {
-                Section ("Sortierung"){
-                    Button {
-                        guard sortOption != "Neueste zuerst" else { return }
-                        withAnimation(UIStylePolicy.Motion.standardEase) {
-                            sortOption = "Neueste zuerst"
-                        }
-                    } label: {
-                        Label("Neueste zuerst", systemImage: "arrow.down")
-                            .labelStyle(.titleAndIcon)
-                    }
-                    
-                    Button {
-                        guard sortOption != "Älteste zuerst" else { return }
-                        withAnimation(UIStylePolicy.Motion.standardEase) {
-                            sortOption = "Älteste zuerst"
-                        }
-                    } label: {
-                        Label("Älteste zuerst", systemImage: "arrow.up")
-                            .labelStyle(.titleAndIcon)
-                    }
-                }
-                } label: {
-                    Image(systemName: sortIconName)
-                        .foregroundStyle(theme.uiAccentColor)
-                }
-                .minimumHitTarget()
-                .accessibilityLabel("Sortierung")
-            } // <- Ende ToolbarItemGroup topBarTrailing
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            filterAndSortMenuButton()
+        } // <- Ende ToolbarItemGroup topBarTrailing
     } // <- Ende feedToolbar
-    
+
     @ViewBuilder
     private func navigationDestinationView(_ entry: FeedEntry) -> some View {
         FeedDetailView(
@@ -806,8 +1144,11 @@ struct FeedListView: View {
                     if !newEntry.isRead {
                         store.markRecentlyRead(articleID: newDetail.link)
                         store.setRead(true, articleID: newDetail.link)
+                        newDetail.isRead = true
+                        newDetail.isNew = false
                         if let idx = entries.firstIndex(where: { $0.link == newDetail.link }) {
                             entries[idx].isRead = true
+                            entries[idx].isNew = false
                             persistEntriesCache()
                         }
                     }
@@ -823,6 +1164,9 @@ struct FeedListView: View {
                 withAnimation(.easeInOut(duration: 0.18)) {
                     if let idx = entries.firstIndex(where: { $0.link == entry.link }) {
                         entries[idx].isRead = isRead
+                        if isRead {
+                            entries[idx].isNew = false
+                        }
                     }
                     if isRead {
                         store.markRecentlyRead(articleID: entry.link)
@@ -831,6 +1175,15 @@ struct FeedListView: View {
                     }
                 }
                 persistEntriesCache()
+            },
+            onToggleBookmark: { isBookmarked in
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    if isBookmarked {
+                        bookmarkedLinks.insert(entry.link)
+                    } else {
+                        bookmarkedLinks.remove(entry.link)
+                    }
+                }
             }
         )
     }
@@ -845,9 +1198,11 @@ struct FeedListView: View {
             return matchedFeed?.title ?? "Unbekannte Quelle"
         }()
         let rowFeedColor = feedColor(for: matchedFeed?.url)
-        let baseDelay = min(Double(index) * 0.015, 0.12)
+        let shouldAnimateInitialAppearance = !didInitialFeedLoad && index < initialCardAppearanceAnimationCount
+        let shouldAnimateInsertedAppearance = pendingInsertedEntryIDs.contains(entry.id)
+        let shouldAnimateCardAppearance = shouldAnimateInitialAppearance || shouldAnimateInsertedAppearance
+        let baseDelay = shouldAnimateCardAppearance ? min(Double(index) * 0.015, 0.12) : 0
         let entryDateValue = entryDate(for: entry)
-        let strippedSummary = entry.content
         let detailEntry: FeedEntry = {
             var updated = entry
             updated.sourceTitle = feedName
@@ -855,31 +1210,35 @@ struct FeedListView: View {
             return updated
         }()
         let isBookmarked = bookmarkedLinks.contains(detailEntry.link)
-        let isRecentlyRead = recentlyReadLinks.contains(detailEntry.link)
         
         Button {
+            var navigationEntry = detailEntry
             // Opening an unread item -> becomes read + recently; if already read, never becomes recently again
             if !entry.isRead {
                 store.markRecentlyRead(articleID: detailEntry.link)
                 store.setRead(true, articleID: detailEntry.link)
+                navigationEntry.isRead = true
+                navigationEntry.isNew = false
                 if let idx = entries.firstIndex(where: { $0.link == detailEntry.link }) {
                     entries[idx].isRead = true
+                    entries[idx].isNew = false
                     persistEntriesCache()
                 }
             }
-            path.append(detailEntry)
+            path.append(navigationEntry)
         } label: {
             let card = ArticleCardView(
                 feedTitle: feedName,
                 feedColor: rowFeedColor,
-                title: entry.title,
-                summary: strippedSummary,
-                isRead: entry.isRead || isRecentlyRead,
+                articleLink: entry.link,
+                title: entry.displayTitle,
+                summary: entry.content,
+                imageURL: entry.imageURL,
+                isRead: entry.isRead,
                 date: entryDateValue,
                 isBookmarked: isBookmarked,
                 highlightTerm: searchText.isEmpty ? nil : searchText,
                 highlightColor: rowFeedColor,
-                previewLineCount: previewLines,
                 useFullColorBackground: fullColorCards
             )
                 .background(Color(.systemBackground).opacity(0.0))
@@ -888,7 +1247,7 @@ struct FeedListView: View {
                         if !fullColorCards {
                             RoundedRectangle(cornerRadius: 20, style: .continuous)
                                 .stroke(
-                                    (entry.isRead || isRecentlyRead)
+                                    (entry.isRead)
                                     ? rowFeedColor.opacity(0.2)
                                     : rowFeedColor.opacity(0.6),
                                     lineWidth: 1
@@ -897,17 +1256,23 @@ struct FeedListView: View {
                     }
                 )
             
-            card
-                .articleCardAppear(trigger: listAppearToken,
-                                   delay: baseDelay,
-                                   glowColor: rowFeedColor,
-                                   speedFactor: 1)
+            Group {
+                if shouldAnimateCardAppearance {
+                    card
+                        .articleCardAppear(trigger: entry.id,
+                                           delay: baseDelay,
+                                           glowColor: rowFeedColor,
+                                           speedFactor: 1)
+                } else {
+                    card
+                }
+            }
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(entry.title)
         .accessibilityValue(entryRowAccessibilityValue(feedName: feedName,
-                                                       isRead: entry.isRead || isRecentlyRead,
+                                                       isRead: entry.isRead,
                                                        isBookmarked: isBookmarked,
                                                        date: entryDateValue))
         .accessibilityHint("Öffnet Artikel")
@@ -936,37 +1301,34 @@ struct FeedListView: View {
                         blur: 0,
                         opacity: 1.0,
                         glowColor: rowFeedColor,
-                        glowOpacity: 0.08,
-                        glowRadius: 16,
-                        glowYOffset: 5
+                        glowOpacity: 0.11,
+                        glowRadius: 20,
+                        glowYOffset: 6
                     )
                 )
             )
         )
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            if entry.isRead || recentlyReadLinks.contains(entry.link) {
-                Button {
+            let isReadState = entry.isRead
+            Button {
+                if isReadState {
                     markAsUnread(entry)
-                } label: {
-                    Image(systemName: "eye.slash")
-                }
-                .accessibilityLabel("Als ungelesen markieren")
-                .tint(theme.uiSwipeColor)
-            } else {
-                Button {
+                } else {
                     markAsRead(entry)
-                } label: {
-                    Image(systemName: "eye")
                 }
-                .accessibilityLabel("Als gelesen markieren")
-                .tint(theme.uiSwipeColor)
+            } label: {
+                Image(systemName: isReadState ? "eye.slash" : "eye")
+                    .fontWeight(.light)
             }
+            .accessibilityLabel(isReadState ? "Als ungelesen markieren" : "Als gelesen markieren")
+            .tint(theme.uiSwipeColor)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button {
                 toggleBookmark(for: detailEntry, isCurrentlyBookmarked: isBookmarked)
             } label: {
                 Image(systemName: isBookmarked ? "bookmark.slash" : "bookmark")
+                    .fontWeight(.light)
             }
             .accessibilityLabel(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen")
             .tint(isBookmarked ? .red : theme.uiSwipeColor)
@@ -976,15 +1338,17 @@ struct FeedListView: View {
     private func triggerInitialLoadIfPossible() {
         guard !feeds.isEmpty else {
             // No feeds to load; hide launch screen quickly so the user can proceed
-            if showLaunchScreen {
-                withAnimation(.easeOut(duration: 0.25)) {
-                    showLaunchScreen = false
-                }
-            }
-            didInitialFeedLoad = true
+            completeInitialFeedLoad()
             return
         }
         didTriggerInitialLoad = true
+
+        // Prefer immediate access to cached/local content when offline.
+        if networkState.isOffline {
+            completeInitialFeedLoad()
+            return
+        }
+
         // Only show launch screen on first cold start, not on background resume
         if !didInitialFeedLoad {
             showLaunchScreen = true
@@ -995,14 +1359,56 @@ struct FeedListView: View {
     }
 
     @MainActor
+    private func completeInitialFeedLoad(minimumVisibleDuration: TimeInterval = 0) {
+        guard !didInitialFeedLoad else { return }
+        hideLaunchScreenIfNeeded(minimumVisibleDuration: minimumVisibleDuration)
+        didInitialFeedLoad = true
+    }
+
+    @MainActor
+    private func hideLaunchScreenIfNeeded(minimumVisibleDuration: TimeInterval = 0) {
+        guard showLaunchScreen else { return }
+
+        let hideNow = {
+            withAnimation(.easeOut(duration: launchScreenHideAnimationDuration)) {
+                showLaunchScreen = false
+            }
+            launchScreenShownAt = nil
+        }
+
+        guard minimumVisibleDuration > 0, let shownAt = launchScreenShownAt else {
+            hideNow()
+            return
+        }
+
+        let elapsed = Date().timeIntervalSince(shownAt)
+        let remaining = minimumVisibleDuration - elapsed
+        if remaining > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
+                guard showLaunchScreen else { return }
+                hideNow()
+            }
+        } else {
+            hideNow()
+        }
+    }
+
+    @MainActor
     private func refreshOnAppActivationIfNeeded() async {
         guard !feeds.isEmpty else { return }
         guard !isLoading else { return }
         guard !networkState.isOffline else { return }
+        let minimumRefreshAge: TimeInterval = 120
+        let now = Date()
+
+        if let persistedDate = FeedRefreshState.lastSuccessfulRefreshDate() {
+            let persistedAge = now.timeIntervalSince(persistedDate)
+            guard persistedAge >= minimumRefreshAge else { return }
+        }
 
         if let lastRefreshDate {
-            let age = Date().timeIntervalSince(lastRefreshDate)
-            guard age >= 0.75 else { return }
+            let age = now.timeIntervalSince(lastRefreshDate)
+            guard age >= minimumRefreshAge else { return }
         }
 
         await loadRSSFeed()
@@ -1017,7 +1423,7 @@ struct FeedListView: View {
     }
     
     private func entryDate(for entry: FeedEntry) -> Date {
-        DateParser.parse(entry.pubDateString)
+        entry.parsedPubDate ?? .distantPast
     }
     
     private func pruneEntriesForRemovedFeeds() {
@@ -1076,6 +1482,7 @@ private struct AppIconArtwork: View {
             } else {
                 Image(systemName: "app.fill")
                     .resizable()
+                    .fontWeight(.light)
                     .scaledToFit()
                     .padding(24)
                     .foregroundStyle(.primary.opacity(0.85))
@@ -1182,6 +1589,10 @@ private struct TopChromePreview: View {
     }
 }
 
+private enum FeedPillMetrics {
+    static let height: CGFloat = 34
+}
+
 private struct FeedSegmentPill: View {
     let title: String
     let tints: [Color]
@@ -1209,11 +1620,11 @@ private struct FeedSegmentPill: View {
         if isActive {
             return colorScheme == .dark
             ? Color.white.opacity(0.96)
-            : (Self.isLight(representativeTint) ? Color.black.opacity(0.78) : Color.white.opacity(0.96))
+            : (Self.isLight(representativeTint) ? Color.black.opacity(0.86) : Color.white.opacity(0.96))
         }
         return colorScheme == .dark
         ? Color.white.opacity(0.42)
-        : Color.black.opacity(0.38)
+        : Color.black.opacity(0.62)
     }
 
     private var capsuleFill: Color {
@@ -1223,15 +1634,15 @@ private struct FeedSegmentPill: View {
             ? representativeTint
             : (colorScheme == .dark ? Color.white : Color.black)
             let baseOpacity = isActive
-            ? (colorScheme == .dark ? 0.30 : 0.20)
-            : (colorScheme == .dark ? 0.14 : 0.10)
+            ? (colorScheme == .dark ? 0.30 : 0.30)
+            : (colorScheme == .dark ? 0.14 : 0.14)
             return tintColor.opacity(min(1, baseOpacity + contrastBoost))
         }
 
         let neutralBase = colorScheme == .dark ? Color.white : Color.black
         let baseOpacity = isActive
-        ? (colorScheme == .dark ? 0.05 : 0.03)
-        : (colorScheme == .dark ? 0.035 : 0.02)
+        ? (colorScheme == .dark ? 0.05 : 0.11)
+        : (colorScheme == .dark ? 0.035 : 0.075)
         return neutralBase.opacity(min(1, baseOpacity + (contrastBoost * 0.4)))
     }
 
@@ -1245,7 +1656,7 @@ private struct FeedSegmentPill: View {
         let strokeBase = isActive ? representativeTint : (colorScheme == .dark ? Color.white : Color.black)
         let baseOpacity = isActive
         ? (colorScheme == .dark ? 0.78 : 0.62)
-        : (colorScheme == .dark ? 0.22 : 0.18)
+        : (colorScheme == .dark ? 0.22 : 0.30)
         return strokeBase.opacity(min(1, baseOpacity + contrastBoost))
     }
 
@@ -1268,11 +1679,12 @@ private struct FeedSegmentPill: View {
         .overlay {
             Capsule()
                 .strokeBorder(
-                    Color.white.opacity(colorScheme == .dark ? 0.14 : 0.22),
+                    Color.white.opacity(colorScheme == .dark ? 0.14 : 0.12),
                     lineWidth: 0.7
                 )
                 .blur(radius: 0.2)
         }
+        .frame(minHeight: FeedPillMetrics.height)
         .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
@@ -1311,70 +1723,22 @@ private struct FeedPillStackingModifier: ViewModifier {
         let xOffset = isCollapsed ? -travel : 0
         let yOffset: CGFloat = 0
         let opacity = isCollapsed ? 0.0 : 1.0
-        let delay = Double(min(index, 12)) * 0.012
+        let delayFactor = isCollapsed ? 0.004 : 0.012
+        let delay = Double(min(index, 12)) * delayFactor
+        let animation: Animation = isCollapsed
+        ? .spring(response: 0.20, dampingFraction: 0.90, blendDuration: 0.08)
+        : .spring(response: 0.32, dampingFraction: 0.86, blendDuration: 0.12)
 
         return content
             .offset(x: xOffset, y: yOffset)
             .opacity(opacity)
             .zIndex(Double(250 - index))
             .animation(
-                .spring(response: 0.32, dampingFraction: 0.86, blendDuration: 0.12).delay(delay),
+                animation.delay(delay),
                 value: isCollapsed
             )
     }
 }
-
-private struct FilterMenuPill: View {
-    let iconName: String
-    let isActive: Bool
-    let accent: Color
-
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-
-    private var labelColor: Color {
-        if isActive {
-            return accent
-        }
-        return colorScheme == .dark
-        ? Color.white.opacity(0.66)
-        : Color.black.opacity(0.62)
-    }
-
-    private var capsuleFill: Color {
-        let contrastBoost = colorSchemeContrast == .increased ? 0.08 : 0
-        let base = isActive ? accent : (colorScheme == .dark ? Color.white : Color.black)
-        let opacity = isActive
-        ? (colorScheme == .dark ? 0.16 : 0.10)
-        : (colorScheme == .dark ? 0.04 : 0.025)
-        return base.opacity(min(1, opacity + contrastBoost))
-    }
-
-    private var capsuleStroke: Color {
-        let contrastBoost = colorSchemeContrast == .increased ? 0.10 : 0
-        let base = isActive ? accent : (colorScheme == .dark ? Color.white : Color.black)
-        let opacity = isActive
-        ? (colorScheme == .dark ? 0.48 : 0.34)
-        : (colorScheme == .dark ? 0.20 : 0.14)
-        return base.opacity(min(1, opacity + contrastBoost))
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: iconName)
-                .font(.subheadline.weight(.semibold))
-        }
-        .foregroundStyle(labelColor)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(capsuleFill, in: Capsule())
-        .overlay {
-            Capsule()
-                .strokeBorder(capsuleStroke, lineWidth: 1)
-        }
-    }
-}
-
 
 // MARK: - Feed Management Logic
 
@@ -1386,6 +1750,18 @@ extension FeedListView {
             try? await Task.sleep(nanoseconds: 120_000_000)
             guard !Task.isCancelled else { return }
             await loadRSSFeed()
+        }
+    }
+
+    private func scheduleInsertionAnimationCleanup() {
+        insertionAnimationCleanupTask?.cancel()
+        let entryIDsToClear = pendingInsertedEntryIDs
+        guard !entryIDsToClear.isEmpty else { return }
+
+        insertionAnimationCleanupTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            guard !Task.isCancelled else { return }
+            pendingInsertedEntryIDs.subtract(entryIDsToClear)
         }
     }
 
@@ -1403,12 +1779,95 @@ extension FeedListView {
         let readIDs = store.readArticleIDs
         for index in entries.indices {
             entries[index].isRead = readIDs.contains(entries[index].link)
+            if entries[index].isRead {
+                entries[index].isNew = false
+            }
+        }
+    }
+
+    private func normalizedEntry(_ entry: FeedEntry, readIDs: Set<String>) -> FeedEntry {
+        var normalized = entry
+        normalized.isRead = readIDs.contains(normalized.link)
+        if normalized.isRead {
+            normalized.isNew = false
+        }
+        return normalized
+    }
+
+    private func mergedEntry(existing: FeedEntry, incoming: FeedEntry, readIDs: Set<String>) -> FeedEntry {
+        var merged = existing
+        merged.title = incoming.title
+        merged.shortTitle = incoming.shortTitle
+        merged.content = incoming.content
+        merged.contentRaw = incoming.contentRaw
+        merged.imageURL = incoming.imageURL
+        merged.author = incoming.author
+        merged.pubDateString = incoming.pubDateString
+        merged.feedURL = incoming.feedURL ?? existing.feedURL
+        merged.sourceTitle = incoming.sourceTitle ?? existing.sourceTitle
+        merged.isRead = readIDs.contains(merged.link)
+        if merged.isRead {
+            merged.isNew = false
+        }
+        return merged
+    }
+
+    private func mergeFetchedEntries(_ fetchedEntries: [FeedEntry], readIDs: Set<String>) -> (entries: [FeedEntry], insertedEntryIDs: Set<String>) {
+        var mergedByLink: [String: FeedEntry] = [:]
+        mergedByLink.reserveCapacity(max(entries.count, fetchedEntries.count))
+
+        for existing in entries {
+            mergedByLink[existing.link] = normalizedEntry(existing, readIDs: readIDs)
+        }
+
+        var insertedEntryIDs: Set<String> = []
+        insertedEntryIDs.reserveCapacity(fetchedEntries.count)
+
+        for incoming in fetchedEntries {
+            if let existing = mergedByLink[incoming.link] {
+                mergedByLink[incoming.link] = mergedEntry(existing: existing, incoming: incoming, readIDs: readIDs)
+            } else {
+                let fresh = normalizedEntry(incoming, readIDs: readIDs)
+                mergedByLink[incoming.link] = fresh
+                insertedEntryIDs.insert(fresh.link)
+            }
+        }
+
+        return (Array(mergedByLink.values), insertedEntryIDs)
+    }
+
+    @MainActor
+    private func applyEntriesSnapshot(_ snapshot: [FeedEntry], insertedEntryIDs: Set<String> = [], persistCache: Bool) {
+        let normalizedSnapshot = sortedAndLimitedEntries(snapshot)
+        let visibleInsertedEntryIDs = insertedEntryIDs.intersection(Set(normalizedSnapshot.map(\.id)))
+
+        if visibleInsertedEntryIDs.isEmpty {
+            withTransaction(Transaction(animation: nil)) {
+                entries = normalizedSnapshot
+            }
+        } else {
+            pendingInsertedEntryIDs.formUnion(visibleInsertedEntryIDs)
+            scheduleInsertionAnimationCleanup()
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.9, blendDuration: 0.12)) {
+                entries = normalizedSnapshot
+            }
+        }
+
+        if persistCache {
+            persistEntriesCache()
         }
     }
 
     @MainActor
     func loadRSSFeed() async {
         syncCloudStateFromICloud()
+
+        // Offline fast path: keep cached/local state visible and avoid network waits.
+        guard !networkState.isOffline else {
+            completeInitialFeedLoad()
+            return
+        }
+
         isLoading = true
 
         let feedsSnapshot = feeds
@@ -1452,67 +1911,22 @@ extension FeedListView {
         }
         
         let readIDs = store.readArticleIDs
-        var existingIndexByLink: [String: Int] = Dictionary(
-            uniqueKeysWithValues: entries.enumerated().map { ($0.element.link, $0.offset) }
+        let mergeResult = mergeFetchedEntries(newEntries, readIDs: readIDs)
+        applyEntriesSnapshot(
+            mergeResult.entries,
+            insertedEntryIDs: didInitialFeedLoad ? mergeResult.insertedEntryIDs : [],
+            persistCache: true
         )
-
-        withTransaction(Transaction(animation: .easeInOut(duration: 0.2))) {
-            for newEntry in newEntries {
-                if let existingIndex = existingIndexByLink[newEntry.link] {
-                    var existing = entries[existingIndex]
-                    existing.title = newEntry.title
-                    existing.content = newEntry.content
-                    existing.imageURL = newEntry.imageURL
-                    existing.author = newEntry.author
-                    existing.pubDateString = newEntry.pubDateString
-                    existing.feedURL = newEntry.feedURL ?? existing.feedURL
-                    existing.sourceTitle = newEntry.sourceTitle ?? existing.sourceTitle
-                    existing.isRead = readIDs.contains(existing.link)
-                    entries[existingIndex] = existing
-                } else {
-                    var fresh = newEntry
-                    fresh.isRead = readIDs.contains(fresh.link)
-                    existingIndexByLink[fresh.link] = entries.count
-                    entries.append(fresh)
-                }
-            }
-        }
-        
-        sortAllEntriesGlobally()
-        persistEntriesCache()
-        bumpListAppearToken()
+        scheduleOfflinePreload(for: mergeResult.entries)
 
         isLoading = false
-        lastRefreshDate = Date()
+        let refreshDate = Date()
+        lastRefreshDate = refreshDate
+        FeedRefreshState.persistLastSuccessfulRefreshDate(refreshDate)
         pushSnapshotToWatch()
         refreshBookmarkedLinks()
         
-        if !didInitialFeedLoad {
-            let hideLaunchScreen = {
-                withAnimation(.easeOut(duration: 0.35)) {
-                    showLaunchScreen = false
-                }
-            }
-            if let shownAt = launchScreenShownAt {
-                let elapsed = Date().timeIntervalSince(shownAt)
-                if elapsed < 0.12 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + (0.12 - elapsed)) {
-                        hideLaunchScreen()
-                        launchScreenShownAt = nil
-                    }
-                } else {
-                    hideLaunchScreen()
-                    launchScreenShownAt = nil
-                }
-            } else {
-                hideLaunchScreen()
-            }
-            didInitialFeedLoad = true
-        }
-    }
-    
-    private func bumpListAppearToken() {
-        listAppearToken = UUID()
+        completeInitialFeedLoad(minimumVisibleDuration: launchScreenMinimumVisibleDuration)
     }
     
     func fetchFeed(_ feed: FeedSource) async -> FeedFetchStatus {
@@ -1525,7 +1939,15 @@ extension FeedListView {
         FeedCacheSync.write(data, for: FeedStorage.Keys.cachedEntries)
         cachedEntriesData = data
     }
-    
+
+    private func scheduleOfflinePreload(for entries: [FeedEntry]) {
+        guard !entries.isEmpty, !networkState.isOffline else { return }
+        let snapshot = entries
+        Task.detached(priority: .utility) {
+            await OfflineArticleArchive.preloader.preload(entries: snapshot)
+        }
+    }
+
     private func restoreCachedEntries() {
         if let bestData = FeedCacheSync.bestAvailableData(for: FeedStorage.Keys.cachedEntries),
            bestData != cachedEntriesData {
@@ -1535,34 +1957,27 @@ extension FeedListView {
         if var cached = try? Self.cacheDecoder.decode([FeedEntry].self, from: cachedEntriesData) {
             for index in cached.indices {
                 cached[index].isRead = store.isRead(articleID: cached[index].link)
+                if cached[index].isRead {
+                    cached[index].isNew = false
+                }
             }
-            entries = cached
-            sortAllEntriesGlobally()
+            applyEntriesSnapshot(
+                cached,
+                insertedEntryIDs: didInitialFeedLoad
+                ? Set(cached.map(\.id)).subtracting(Set(entries.map(\.id)))
+                : [],
+                persistCache: false
+            )
+            if lastRefreshDate == nil {
+                lastRefreshDate = FeedRefreshState.lastSuccessfulRefreshDate()
+            }
             pruneEntriesForRemovedFeeds()
             pushSnapshotToWatch()
+            scheduleOfflinePreload(for: cached)
             
             // If cached content is restored, hide the launch screen promptly with a tiny minimum
-            if showLaunchScreen && !didInitialFeedLoad {
-                let hideLaunchScreen = {
-                    withAnimation(.easeOut(duration: 0.35)) {
-                        showLaunchScreen = false
-                    }
-                }
-                if let shownAt = launchScreenShownAt {
-                    let elapsed = Date().timeIntervalSince(shownAt)
-                    if elapsed < 0.12 {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + (0.12 - elapsed)) {
-                            hideLaunchScreen()
-                            launchScreenShownAt = nil
-                        }
-                    } else {
-                        hideLaunchScreen()
-                        launchScreenShownAt = nil
-                    }
-                } else {
-                    hideLaunchScreen()
-                }
-                didInitialFeedLoad = true
+            if showLaunchScreen {
+                completeInitialFeedLoad(minimumVisibleDuration: launchScreenMinimumVisibleDuration)
             }
         }
     }
@@ -1571,9 +1986,18 @@ extension FeedListView {
         let byURL: [String: FeedSource]
         let byHost: [String: FeedSource]
         let byDomain: [String: FeedSource]
+
+        static let empty = FeedLookupMaps(byURL: [:], byHost: [:], byDomain: [:])
     }
 
-    private var feedLookupMaps: FeedLookupMaps {
+    private var effectiveFeedLookupMaps: FeedLookupMaps {
+        if didPrepareDerivedFeedState {
+            return cachedFeedLookupMaps
+        }
+        return buildFeedLookupMaps()
+    }
+
+    private func buildFeedLookupMaps() -> FeedLookupMaps {
         var byURL: [String: FeedSource] = [:]
         byURL.reserveCapacity(feeds.count)
         var byHost: [String: FeedSource] = [:]
@@ -1648,9 +2072,46 @@ extension FeedListView {
         }
     }
 
-    private func entriesMatchingSelection(for selectedFeedID: String, includeSearch: Bool) -> [FeedEntry] {
+    private enum WidgetSelectionContextStore {
+        static let selectedFeedIDsKey = "nf_widget_selected_feed_ids_v1"
+        static let quickFilterKey = "nf_widget_quick_filter_v1"
+        static let lockScreenCurrentLinkKey = "nf_widget_lockscreen_current_link_v1"
+    }
+
+    private func refreshDerivedFeedState() {
+        let lookup = buildFeedLookupMaps()
+        cachedFeedLookupMaps = lookup
+        cachedVisibleEntries = filteredEntries(for: activeFeedTabID, lookup: lookup)
+        cachedFeedPillFeeds = computeFeedPillFeeds(using: lookup)
+        didPrepareDerivedFeedState = true
+    }
+
+    private func visibleEntriesForDisplay(selectedFeedID: String, lookup: FeedLookupMaps) -> [FeedEntry] {
+        guard didPrepareDerivedFeedState else {
+            return filteredEntries(for: selectedFeedID, lookup: lookup)
+        }
+        guard selectedFeedID == activeFeedTabID else {
+            return filteredEntries(for: selectedFeedID, lookup: lookup)
+        }
+        return cachedVisibleEntries
+    }
+
+    private func computeFeedPillFeeds(using lookup: FeedLookupMaps) -> [FeedSource] {
+        var matchingFeedIDs: Set<String> = []
+        matchingFeedIDs.reserveCapacity(feeds.count)
+
+        for entry in entries where matchesQuickFilter(entry, filter: activeQuickFilter) {
+            guard let feed = resolveFeed(for: entry, lookup: lookup) else { continue }
+            matchingFeedIDs.insert(feed.id)
+        }
+
+        return feeds.filter { matchingFeedIDs.contains($0.id) }
+    }
+
+    private func entriesMatchingSelection(for selectedFeedID: String,
+                                          includeSearch: Bool,
+                                          lookup: FeedLookupMaps) -> [FeedEntry] {
         let activeFeedIDs = resolvedSelectedFeedIDs
-        let lookup = feedLookupMaps
         let query = searchText.lowercased()
         let hasSearch = includeSearch && !searchText.isEmpty
 
@@ -1679,27 +2140,29 @@ extension FeedListView {
         return title.contains(query) || summary.contains(query) || author.contains(query)
     }
 
-    private func filteredEntries(for selectedFeedID: String) -> [FeedEntry] {
-        var result = entriesMatchingSelection(for: selectedFeedID, includeSearch: true)
-        let calendar = Calendar.current
-
-        switch activeQuickFilter {
-        case .bookmarks:
-            result = result.filter { bookmarkedLinks.contains($0.link) }
-        case .unread:
-            result = result.filter { entry in
-                !entry.isRead || recentlyReadLinks.contains(entry.link)
-            }
-        case .today:
-            result = result.filter { entry in
-                let publishedDate = DateParser.parse(entry.pubDateString)
-                return publishedDate != .distantPast && calendar.isDateInToday(publishedDate)
-            }
-        case .none:
-            break
-        }
-
+    private func filteredEntries(for selectedFeedID: String, lookup: FeedLookupMaps) -> [FeedEntry] {
+        var result = entriesMatchingSelection(for: selectedFeedID, includeSearch: true, lookup: lookup)
+        result = result.filter { matchesQuickFilter($0, filter: activeQuickFilter) }
         return result
+    }
+
+    private func filteredEntries(for selectedFeedID: String) -> [FeedEntry] {
+        filteredEntries(for: selectedFeedID, lookup: effectiveFeedLookupMaps)
+    }
+
+    private func matchesQuickFilter(_ entry: FeedEntry, filter: QuickFilterKind?) -> Bool {
+        switch filter {
+        case .bookmarks:
+            return bookmarkedLinks.contains(entry.link)
+        case .unread:
+            // Keep recently-read items in unread flow until next refresh promotion.
+            return !entry.isRead || recentlyReadLinks.contains(entry.link)
+        case .today:
+            let publishedDate = entry.parsedPubDate ?? .distantPast
+            return publishedDate != .distantPast && Calendar.current.isDateInToday(publishedDate)
+        case .none:
+            return true
+        }
     }
 
     private func normalizeSelectedFeedIDs(using availableFeeds: [FeedSource]? = nil) {
@@ -1744,10 +2207,11 @@ extension FeedListView {
         activeFeedTabID = selectedID
     }
 
-    private func toggleAllFeedSelection() {
-        guard !orderedFeedIDs.isEmpty else { return }
+    private func toggleAllFeedSelection(for feedIDs: Set<String>? = nil) {
+        let targetFeedIDs = (feedIDs ?? validFeedIDs).intersection(validFeedIDs)
+        guard !targetFeedIDs.isEmpty else { return }
         didInitializeFeedSelection = true
-        selectedFeedIDs = validFeedIDs
+        selectedFeedIDs = targetFeedIDs
 
         syncActiveFeedTabID()
     }
@@ -1769,7 +2233,10 @@ extension FeedListView {
     }
 
     var filteredEntries: [FeedEntry] {
-        filteredEntries(for: activeFeedTabID)
+        if didPrepareDerivedFeedState {
+            return cachedVisibleEntries
+        }
+        return filteredEntries(for: activeFeedTabID)
     }
     
     @MainActor
@@ -1793,8 +2260,11 @@ extension FeedListView {
         if !entry.isRead {
             store.markRecentlyRead(articleID: entry.link)
             store.setRead(true, articleID: entry.link)
+            entry.isRead = true
+            entry.isNew = false
             if let idx = entries.firstIndex(where: { $0.link == entry.link }) {
                 entries[idx].isRead = true
+                entries[idx].isNew = false
                 persistEntriesCache()
                 pushSnapshotToWatch()
             }
@@ -1825,39 +2295,17 @@ extension FeedListView {
         return nil
     }
 
-    private var quickFilterSelection: Binding<QuickFilterKind?> {
-        Binding(
-            get: { activeQuickFilter },
-            set: { newValue in
-                triggerLightHaptic()
-                withAnimation(UIStylePolicy.Motion.standardEase) {
-                    setQuickFilter(newValue)
-                }
-            }
-        )
-    }
-
-    private var filterButtonIconName: String {
-        activeQuickFilter?.iconName ?? "line.3.horizontal.decrease"
-    }
-
-    private func quickFilterCount(for filter: QuickFilterKind) -> Int {
-        switch filter {
+    private var filterToolbarIconMode: FilterToolbarAnimatedIcon.Mode {
+        switch activeQuickFilter {
         case .bookmarks:
-            return bookmarkQuickFilterCount
+            return .bookmarks
         case .unread:
-            return unreadQuickFilterCount
+            return .unread
         case .today:
-            return todayQuickFilterCount
+            return .today
+        case .none:
+            return .none
         }
-    }
-
-    private func quickFilterMenuLabel(for filter: QuickFilterKind) -> String {
-        "\(filter.title) (\(quickFilterCount(for: filter)))"
-    }
-
-    private var quickFilterMenuOrder: [QuickFilterKind] {
-        [.unread, .today, .bookmarks]
     }
 
     private func triggerLightHaptic() {
@@ -1870,10 +2318,9 @@ extension FeedListView {
 
     private func clearAndDismissSearch() {
         searchText = ""
+        withAnimation(UIStylePolicy.Motion.standardEase) {}
+        isSearchBarExpanded = false
         isToolbarSearchFocused = false
-        withAnimation(UIStylePolicy.Motion.standardEase) {
-            isSearchBarExpanded = false
-        }
     }
 
     @MainActor
@@ -1892,28 +2339,112 @@ extension FeedListView {
         )
     }
 
-    private func filterMenuButton() -> some View {
-        return Menu {
-            Picker("", selection: quickFilterSelection) {
-                Label("Alle Artikel", systemImage: "line.3.horizontal.decrease")
-                    .tag(nil as QuickFilterKind?)
+    private func persistWidgetSelectionContext() {
+        let defaults = FeedStorage.defaults
+        let selectedIDs = Array(resolvedSelectedFeedIDs).sorted()
+        if let data = try? JSONEncoder().encode(selectedIDs) {
+            defaults.set(data, forKey: WidgetSelectionContextStore.selectedFeedIDsKey)
+        } else {
+            defaults.removeObject(forKey: WidgetSelectionContextStore.selectedFeedIDsKey)
+        }
 
-                ForEach(quickFilterMenuOrder) { filter in
-                    Label(quickFilterMenuLabel(for: filter), systemImage: filter.iconName)
-                        .tag(filter as QuickFilterKind?)
+        let quickFilterValue = activeQuickFilter?.rawValue ?? "all"
+        defaults.set(quickFilterValue, forKey: WidgetSelectionContextStore.quickFilterKey)
+    }
+
+    private func shouldReloadWidgetForReadStateChange(from oldValue: Set<String>, to newValue: Set<String>) -> Bool {
+        let defaults = FeedStorage.defaults
+        guard let currentLink = defaults.string(forKey: WidgetSelectionContextStore.lockScreenCurrentLinkKey),
+              !currentLink.isEmpty else {
+            return false
+        }
+
+        let oldIsRead = oldValue.contains(currentLink)
+        let newIsRead = newValue.contains(currentLink)
+        return oldIsRead != newIsRead
+    }
+
+    private func scheduleWidgetTimelineReload() {
+#if canImport(WidgetKit)
+        widgetTimelineReloadTask?.cancel()
+        widgetTimelineReloadTask = Task { @MainActor in
+            // Coalesce rapid read/unread toggles into a single widget reload.
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            guard !Task.isCancelled else { return }
+            let center = WidgetCenter.shared
+            center.reloadTimelines(ofKind: "NotiFeeder_Widget_LockScreenRectangular")
+            center.reloadAllTimelines()
+        }
+#endif
+    }
+
+    private func filterAndSortMenuButton() -> some View {
+        Menu {
+            Section("Filter") {
+                ControlGroup {
+                    quickFilterMenuButton(title: "Heute", iconName: "calendar", selection: .today)
+                    quickFilterMenuButton(title: "Ungelesen", iconName: "eye", selection: .unread)
+                    quickFilterMenuButton(title: "Bookmark", iconName: "bookmark", selection: .bookmarks)
                 }
             }
+
+            Section("Sortierung") {
+                sortMenuButton(title: "Neueste zuerst", iconName: "arrow.down")
+                sortMenuButton(title: "Älteste zuerst", iconName: "arrow.up")
+            }
         } label: {
-            FilterMenuPill(
-                iconName: filterButtonIconName,
-                isActive: hasActiveQuickFilter,
-                accent: theme.uiAccentColor
-            )
+            FilterToolbarAnimatedIcon(mode: filterToolbarIconMode, tint: theme.uiAccentColor)
+                .font(.body)
+                .fontWeight(.light)
         }
         .buttonStyle(.plain)
         .minimumHitTarget()
-        .accessibilityLabel("Filter")
-        .accessibilityHint("Öffnet die Filterauswahl")
+        .accessibilityLabel("Filter und Sortierung")
+        .accessibilityHint("Öffnet die Filter- und Sortierauswahl")
+    }
+
+    private func quickFilterMenuButton(title: String, iconName: String, selection: QuickFilterKind?) -> some View {
+        let isSelected = activeQuickFilter == selection
+        return Button {
+            triggerLightHaptic()
+            withAnimation(UIStylePolicy.Motion.standardEase) {
+                setQuickFilter(isSelected ? nil : selection)
+            }
+        } label: {
+            Label {
+                Text(title)
+            } icon: {
+                Image(systemName: isSelected ? "checkmark" : iconName)
+                    .fontWeight(.light)
+            }
+            .labelStyle(.titleAndIcon)
+        }
+    }
+
+    private var settingsAvatarImage: UIImage? {
+        guard !profileAvatarData.isEmpty else { return nil }
+        return UIImage(data: profileAvatarData)
+    }
+
+    private func sortMenuButton(title: String, iconName: String) -> some View {
+        let isSelected = sortOption == title
+        return Button {
+            triggerLightHaptic()
+            withAnimation(UIStylePolicy.Motion.standardEase) {
+                guard sortOption != title else { return }
+                sortOption = title
+                sortAllEntriesGlobally()
+                persistEntriesCache()
+            }
+        } label: {
+            Label {
+                Text(title)
+            } icon: {
+                Image(systemName: isSelected ? "checkmark" : iconName)
+                    .fontWeight(.light)
+            }
+            .labelStyle(.titleAndIcon)
+        }
     }
 
     private func iconTint(active: Bool) -> Color {
@@ -1964,23 +2495,20 @@ extension FeedListView {
 
     func markAsRead(_ entry: FeedEntry) {
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                entries[index].isRead = true
-            }
+            entries[index].isRead = true
+            entries[index].isNew = false
             store.markRecentlyRead(articleID: entry.link)
             store.setRead(true, articleID: entry.link)
-            persistEntriesCache()
+            pushSnapshotToWatch()
         }
     }
     
     func markAsUnread(_ entry: FeedEntry) {
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                entries[index].isRead = false
-            }
+            entries[index].isRead = false
             store.unmarkRecentlyRead(articleID: entry.link)
             store.setRead(false, articleID: entry.link)
-            persistEntriesCache()
+            pushSnapshotToWatch()
         }
     }
     
@@ -2011,7 +2539,7 @@ extension FeedListView {
     }
     
     func feedSource(for entry: FeedEntry) -> FeedSource? {
-        resolveFeed(for: entry, lookup: feedLookupMaps)
+        resolveFeed(for: entry, lookup: effectiveFeedLookupMaps)
     }
     
     func baseDomain(from host: String?) -> String? {
@@ -2029,6 +2557,172 @@ extension FeedListView {
     }
 }
 
+private struct FilterToolbarAnimatedIcon: View {
+    enum Mode {
+        case none
+        case unread
+        case today
+        case bookmarks
+    }
+
+    let mode: Mode
+    let tint: Color
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Group {
+            if reduceMotion {
+                staticIcon(for: mode)
+            } else {
+                animatedIcon(for: mode)
+            }
+        }
+        .foregroundStyle(tint)
+        .frame(width: 18, height: 18, alignment: .center)
+        .id(mode)
+    }
+
+    @ViewBuilder
+    private func staticIcon(for mode: Mode) -> some View {
+        switch mode {
+        case .none:
+            Image(systemName: "line.3.horizontal.decrease")
+        case .unread:
+            Image(systemName: "eye")
+        case .today:
+            Image(systemName: "calendar")
+        case .bookmarks:
+            Image(systemName: "bookmark")
+        }
+    }
+
+    @ViewBuilder
+    private func animatedIcon(for mode: Mode) -> some View {
+        switch mode {
+        case .none:
+            FilterSequentialLinesIcon()
+        case .unread:
+            FilterBlinkingEyeIcon()
+        case .today:
+            FilterCalendarJumpingDotsIcon()
+        case .bookmarks:
+            FilterBookmarkFillIcon()
+        }
+    }
+}
+
+private struct FilterBlinkingEyeIcon: View {
+    @State private var isClosed = false
+    @State private var didStart = false
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "eye")
+                .opacity(isClosed ? 0 : 1)
+            Image(systemName: "eye.slash")
+                .opacity(isClosed ? 1 : 0)
+        }
+        .scaleEffect(y: isClosed ? 0.94 : 1.0)
+        .onAppear {
+            guard !didStart else { return }
+            didStart = true
+
+            withAnimation(.easeInOut(duration: 0.20)) {
+                isClosed = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
+                withAnimation(.easeInOut(duration: 0.24)) {
+                    isClosed = false
+                }
+            }
+        }
+    }
+}
+
+private struct FilterCalendarJumpingDotsIcon: View {
+    @State private var dotOffsets: [CGFloat] = [1.3, 1.3, 1.3]
+    @State private var didStart = false
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "calendar")
+            HStack(spacing: 2.1) {
+                ForEach(0..<3, id: \.self) { index in
+                    Circle()
+                        .frame(width: 2.8, height: 2.8)
+                        .offset(y: dotOffsets[index])
+                }
+            }
+            .offset(y: 3.5)
+        }
+        .onAppear {
+            guard !didStart else { return }
+            didStart = true
+
+            for index in 0..<3 {
+                let startDelay = Double(index) * 0.08
+                DispatchQueue.main.asyncAfter(deadline: .now() + startDelay) {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        dotOffsets[index] = -1.3
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + startDelay + 0.16) {
+                    withAnimation(.easeIn(duration: 0.14)) {
+                        dotOffsets[index] = 1.3
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct FilterBookmarkFillIcon: View {
+    @State private var fillProgress: CGFloat = 0.0
+    @State private var didStart = false
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "bookmark")
+            Image(systemName: "bookmark.fill")
+                .mask(alignment: .top) {
+                    Rectangle()
+                        .scaleEffect(y: max(fillProgress, 0.001), anchor: .top)
+                }
+        }
+        .onAppear {
+            guard !didStart else { return }
+            didStart = true
+
+            withAnimation(.linear(duration: 0.70)) {
+                fillProgress = 1.0
+            }
+        }
+    }
+}
+
+private struct FilterSequentialLinesIcon: View {
+    @State private var offsetY: CGFloat = 4.0
+    @State private var opacity: Double = 0.0
+    @State private var didStart = false
+
+    var body: some View {
+        Image(systemName: "line.3.horizontal.decrease")
+            .offset(y: offsetY)
+            .opacity(opacity)
+        .onAppear {
+            guard !didStart else { return }
+            didStart = true
+
+            withAnimation(.easeOut(duration: 0.20)) {
+                opacity = 1.0
+            }
+            withAnimation(.spring(response: 0.44, dampingFraction: 0.82)) {
+                offsetY = 0.0
+            }
+        }
+    }
+}
+
 struct EmptyFeedView: View {
     @EnvironmentObject private var theme: ThemeSettings
     
@@ -2036,6 +2730,7 @@ struct EmptyFeedView: View {
         VStack(spacing: 12) {
             Image(systemName: "tray")
                 .font(.system(size: 44))
+                .fontWeight(.light)
                 .foregroundStyle(theme.uiAccentColor)
             Text("Keine Artikel verfügbar")
                 .font(.headline)
@@ -2060,30 +2755,31 @@ struct FeedsSettingsViewPlaceholder: View {
     @State private var selectedIndex: Int? = nil
     
     @EnvironmentObject private var theme: ThemeSettings
-    @Environment(\.colorScheme) private var colorScheme
     
     var body: some View {
         List {
-            Section {
+            Section("Gespeicherte Feeds") {
                 if feeds.isEmpty {
-                    SettingsCardSurface {
-                        HStack(spacing: 12) {
-                            SettingsIconTile(systemName: "tray", tint: theme.uiAccentColor)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Noch keine Feeds hinzugefügt")
-                                    .appTitle()
-                                    .foregroundStyle(primaryTextColor)
-                                Text("Füge deinen ersten RSS-Feed hinzu, damit Artikel in der Übersicht erscheinen.")
-                                    .appSecondary()
-                                    .foregroundStyle(secondaryTextColor)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                    HStack(spacing: 12) {
+                        SettingsListIconBadge(systemName: "tray", tint: theme.uiAccentColor)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Noch keine Feeds hinzugefügt")
+                                .appTitle()
+                                .foregroundStyle(.primary)
+                            Text("Füge deinen ersten RSS-Feed hinzu, damit Artikel in der Übersicht erscheinen.")
+                                .appMeta()
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .padding(14)
                     }
                 } else {
                     ForEach(feeds, id: \.url) { feed in
-                        SettingsCardSurface {
+                        Button {
+                            if let idx = feeds.firstIndex(where: { $0.url == feed.url }) {
+                                selectedIndex = idx
+                                selectedFeed = feed
+                            }
+                        } label: {
                             HStack(spacing: 12) {
                                 CachedFeedFaviconView(feedURLString: feed.url)
                                     .frame(width: 38, height: 38)
@@ -2091,19 +2787,21 @@ struct FeedsSettingsViewPlaceholder: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(feed.title)
                                         .appTitle()
-                                        .foregroundStyle(primaryTextColor)
+                                        .foregroundStyle(.primary)
                                     Text(feed.url)
                                         .appMeta()
-                                        .foregroundStyle(secondaryTextColor)
+                                        .foregroundStyle(.secondary)
                                         .lineLimit(1)
                                 }
                                 Spacer(minLength: 0)
                                 Image(systemName: "chevron.right")
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(secondaryTextColor)
+                                    .font(.system(size: 13))
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.tertiary)
                             }
-                            .padding(14)
+                            .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
                             Button {
                                 if let idx = feeds.firstIndex(where: { $0.url == feed.url }) {
@@ -2112,41 +2810,34 @@ struct FeedsSettingsViewPlaceholder: View {
                                 }
                             } label: {
                                 Image(systemName: "pencil")
+                                    .fontWeight(.light)
                             }
                             .tint(theme.uiAccentColor)
                             .accessibilityLabel("Feed bearbeiten")
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            if let idx = feeds.firstIndex(where: { $0.url == feed.url }) {
-                                selectedIndex = idx
-                                selectedFeed = feed
-                            }
                         }
                     }
                     .onDelete(perform: deleteFeeds)
                     .onMove(perform: moveFeeds)
                 }
-                SettingsCardSurface {
-                    Button {
-                        showAddFeedSheet = true
-                    } label: {
-                        HStack(spacing: 12) {
-                            SettingsIconTile(systemName: "plus", tint: theme.uiAccentColor)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Feed hinzufügen")
-                                    .appTitle()
-                                    .foregroundStyle(primaryTextColor)
-                                Text("Neuen RSS-Feed mit eigener Farbe anlegen.")
-                                    .appSecondary()
-                                    .foregroundStyle(secondaryTextColor)
-                            }
-                            Spacer(minLength: 0)
+            }
+
+            Section {
+                Button {
+                    showAddFeedSheet = true
+                } label: {
+                    HStack(spacing: 12) {
+                        SettingsListIconBadge(systemName: "plus", tint: theme.uiAccentColor)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Feed hinzufügen")
+                                .appTitle()
+                                .foregroundStyle(.primary)
+                            Text("Neuen RSS-Feed mit eigener Farbe anlegen.")
+                                .appMeta()
+                                .foregroundStyle(.secondary)
                         }
-                        .padding(14)
                     }
-                    .buttonStyle(.plain)
                 }
+                .buttonStyle(.plain)
             }
         }
         .navigationTitle("Feeds verwalten")
@@ -2154,11 +2845,7 @@ struct FeedsSettingsViewPlaceholder: View {
         .sheetCornerAlignedScrollContent()
         .scrollContentBackground(.hidden)
         .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
-        .listStyle(.plain)
-        .listSectionSpacing(8)
-        .listRowSeparator(.hidden)
-        .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-        .listRowBackground(Color.clear)
+        .listStyle(.insetGrouped)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 EditButton()
@@ -2171,7 +2858,7 @@ struct FeedsSettingsViewPlaceholder: View {
                 persistFeeds()
             }
             .environmentObject(theme)
-            .presentationDetents([UIStylePolicy.Sheet.mediumDetent])
+            .presentationDetents([.fraction(0.6)])
             .presentationBackground(.clear)
         }
         .sheet(item: $selectedFeed, onDismiss: {
@@ -2187,7 +2874,7 @@ struct FeedsSettingsViewPlaceholder: View {
                 }
             }
             .environmentObject(theme)
-            .presentationDetents([UIStylePolicy.Sheet.compactDetent])
+            .presentationDetents([.fraction(0.6)])
             .interactiveDismissDisabled(false)
             .presentationBackground(.clear)
         }
@@ -2224,14 +2911,6 @@ struct FeedsSettingsViewPlaceholder: View {
     private func moveFeeds(from source: IndexSet, to destination: Int) {
         feeds.move(fromOffsets: source, toOffset: destination)
         persistFeeds()
-    }
-
-    private var primaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.96) : Color.primary
-    }
-
-    private var secondaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.62) : Color.secondary
     }
 }
 
@@ -2315,10 +2994,6 @@ struct AddSingleFeedView: View {
                 }
 
                 SettingsSectionCard(title: "Farbe") {
-                    Text("Wähle eine Farbe für den Feed, damit er in der Übersicht klar erkennbar bleibt.")
-                        .appSecondary()
-                        .foregroundStyle(secondaryTextColor)
-
                     colorPalette
                 }
             }
@@ -2327,7 +3002,7 @@ struct AddSingleFeedView: View {
             .tint(theme.uiAccentColor)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() }label:{Image(systemName: "xmark")}
+                    Button { dismiss() }label:{Image(systemName: "xmark").fontWeight(.light)}
                 }
                 
                 
@@ -2344,7 +3019,7 @@ struct AddSingleFeedView: View {
                         }
                         onAdd(feed)
                         dismiss()
-                    }label:{Image(systemName: "checkmark")}
+                    }label:{Image(systemName: "checkmark").fontWeight(.light)}
                         .disabled(FeedDraft(title: title, url: urlString).trimmedURL.isEmpty)
                 }
             }
@@ -2370,7 +3045,8 @@ struct AddSingleFeedView: View {
 
                     if selectedOption == option {
                         Image(systemName: "checkmark")
-                            .font(.caption2.bold())
+                            .font(.caption2)
+                            .fontWeight(.light)
                             .foregroundStyle(.black.opacity(0.7))
                     }
                 }
@@ -2395,30 +3071,20 @@ struct AddSingleFeedView: View {
         keyboardType: UIKeyboardType,
         autocapitalization: TextInputAutocapitalization
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .appSecondary()
-                .foregroundStyle(secondaryTextColor)
-
-            TextField(title, text: text)
-                .textInputAutocapitalization(autocapitalization)
-                .keyboardType(keyboardType)
-                .autocorrectionDisabled(true)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.035))
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.07), lineWidth: 1)
-                }
-        }
-    }
-
-    private var secondaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.62) : Color.secondary
+        TextField(title, text: text)
+            .textInputAutocapitalization(autocapitalization)
+            .keyboardType(keyboardType)
+            .autocorrectionDisabled(true)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.035))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.07), lineWidth: 1)
+            }
     }
 }
 
@@ -2450,10 +3116,6 @@ struct EditSingleFeedView: View {
                 }
 
                 SettingsSectionCard(title: "Farbe") {
-                    Text("Passe die Feed-Farbe an, damit Karten und Artikeldetails konsistent bleiben.")
-                        .appSecondary()
-                        .foregroundStyle(secondaryTextColor)
-
                     colorPalette
                 }
             }
@@ -2470,7 +3132,7 @@ struct EditSingleFeedView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
+                    Button { dismiss() } label: { Image(systemName: "xmark").fontWeight(.light) }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
@@ -2482,7 +3144,7 @@ struct EditSingleFeedView: View {
                         }
                         onSave(updated)
                         dismiss()
-                    } label: { Image(systemName: "checkmark") }
+                    } label: { Image(systemName: "checkmark").fontWeight(.light) }
                         .disabled(FeedDraft(title: title, url: urlString).trimmedURL.isEmpty)
                 }
             }
@@ -2506,7 +3168,8 @@ struct EditSingleFeedView: View {
 
                     if selectedOption == option {
                         Image(systemName: "checkmark")
-                            .font(.caption2.bold())
+                            .font(.caption2)
+                            .fontWeight(.light)
                             .foregroundStyle(.black.opacity(0.7))
                     }
                 }
@@ -2534,123 +3197,95 @@ struct EditSingleFeedView: View {
         keyboardType: UIKeyboardType,
         autocapitalization: TextInputAutocapitalization
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .appSecondary()
-                .foregroundStyle(secondaryTextColor)
-
-            TextField(title, text: text)
-                .textInputAutocapitalization(autocapitalization)
-                .keyboardType(keyboardType)
-                .autocorrectionDisabled(true)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.035))
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.07), lineWidth: 1)
-                }
-        }
-    }
-
-    private var secondaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.62) : Color.secondary
+        TextField(title, text: text)
+            .textInputAutocapitalization(autocapitalization)
+            .keyboardType(keyboardType)
+            .autocorrectionDisabled(true)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.035))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.07), lineWidth: 1)
+            }
     }
 }
 
 struct PersonalizationViewPlaceholder: View {
     @EnvironmentObject private var theme: ThemeSettings
-    @Environment(\.colorScheme) private var colorScheme
-    @AppStorage("ui.cards.previewLines") private var previewLines: Int = 3
     @AppStorage("ui.cards.style.fullColor") private var fullColorCards: Bool = false
     
     var body: some View {
-        SettingsScaffold {
-            SettingsSectionCard(title: "Vorschau") {
-                HStack(spacing: 12) {
-                    SettingsIconTile(systemName: "text.justify.left", tint: theme.uiAccentColor)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("Anzahl Vorschauzeilen")
-                            .appTitle()
-                            .foregroundStyle(primaryTextColor)
-                        Text("Wie viel Text pro Artikelkarte sichtbar bleibt.")
-                            .appSecondary()
-                            .foregroundStyle(secondaryTextColor)
-                    }
-                    Spacer(minLength: 0)
-                    SettingsValuePill(text: "\(previewLines)")
-                }
-
-                Stepper("Vorschauzeilen", value: $previewLines, in: 0...6)
-                    .labelsHidden()
-                    .tint(theme.uiAccentColor)
-            }
-
-            SettingsSectionCard(title: "Kartenstil") {
+        List {
+            Section {
                 Toggle(isOn: $fullColorCards) {
                     HStack(spacing: 12) {
-                        SettingsIconTile(systemName: fullColorCards ? "rectangle.inset.filled" : "rectangle", tint: theme.uiAccentColor)
+                        SettingsListIconBadge(
+                            systemName: fullColorCards ? "rectangle.inset.filled" : "rectangle",
+                            tint: theme.uiAccentColor
+                        )
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Vollflächige Kacheln")
                                 .appTitle()
-                                .foregroundStyle(primaryTextColor)
+                                .foregroundStyle(.primary)
                             Text("Nutzen die Feed-Farbe als deutlichere Kartenfläche.")
-                                .appSecondary()
-                                .foregroundStyle(secondaryTextColor)
+                                .appMeta()
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
                 .tint(theme.uiAccentColor)
+            } header: {
+                Text("Kartenstil")
+            } footer: {
+                Text("Aktiviere das für stärkere Farbakzente in der Feed-Übersicht.")
+                    .appMeta()
             }
         }
+        .sheetCornerAlignedScrollContent()
+        .scrollContentBackground(.hidden)
+        .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
+        .listStyle(.insetGrouped)
         .navigationTitle("Karten & Layout")
         .navigationBarTitleDisplayMode(.inline)
         .tint(theme.uiAccentColor)
-        .onChange(of: previewLines) { _, newValue in
-            FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.uiCardsPreviewLines)
-        }
         .onChange(of: fullColorCards) { _, newValue in
             FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.uiCardsStyleFullColor)
         }
     }
-
-    private var primaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.96) : Color.primary
-    }
-
-    private var secondaryTextColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.62) : Color.secondary
-    }
 }
 
 struct InfoViewPlaceholder: View {
+    @EnvironmentObject private var theme: ThemeSettings
+
     var body: some View {
-        SettingsScaffold {
-            SettingsSectionCard(title: "Danksagung") {
-                Text("Vielen Dank an alle Open-Source-Projekte und die Community, die diese App möglich machen.")
-                    .appSecondary()
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        List {
+            Section("Autor") {
+                infoLinkRow(
+                    label: "Name",
+                    title: "Dyonisos Fergadiotis",
+                    destination: URL(string: "https://dyonisosfergadiotis.de")!
+                )
             }
 
-            SettingsSectionCard(title: "Autor") {
-                infoRow(label: "Name", value: "Dein Name")
-                infoRow(label: "Kontakt", value: "@deinhandle")
-            }
-
-            SettingsSectionCard(title: "App") {
+            Section("App") {
                 infoRow(label: "Version", value: appVersion)
                 infoRow(label: "Build", value: appBuild)
             }
 
-            SettingsSectionCard(title: "Rechtliches") {
+            Section("Rechtliches") {
                 infoRow(label: "Lizenz", value: "MIT License")
-                infoRow(label: "Copyright", value: "© \(Calendar.current.component(.year, from: Date())) Dein Name")
+                infoRow(label: "Copyright", value: "© \(Calendar.current.component(.year, from: Date())) Dyonisos Fergadiotis")
             }
         }
+        .sheetCornerAlignedScrollContent()
+        .scrollContentBackground(.hidden)
+        .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
+        .listStyle(.insetGrouped)
         .navigationTitle("App & Info")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -2664,6 +3299,18 @@ struct InfoViewPlaceholder: View {
             Text(value)
                 .appTitle()
                 .foregroundStyle(.primary)
+        }
+    }
+
+    private func infoLinkRow(label: String, title: String, destination: URL) -> some View {
+        HStack {
+            Text(label)
+                .appSecondary()
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            Link(title, destination: destination)
+                .appTitle()
+                .foregroundStyle(theme.uiAccentColor)
         }
     }
     

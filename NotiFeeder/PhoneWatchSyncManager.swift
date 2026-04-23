@@ -57,6 +57,8 @@ final class PhoneWatchSyncManager: NSObject {
     }()
 
     private var snapshotTask: Task<Void, Never>?
+    private let activationQueue = DispatchQueue(label: "PhoneWatchSyncManager.activation")
+    private var isActivationInFlight = false
 
     private override init() {
         super.init()
@@ -67,6 +69,15 @@ final class PhoneWatchSyncManager: NSObject {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
         session.delegate = self
+
+        let shouldActivate = activationQueue.sync { () -> Bool in
+            guard !isActivationInFlight else { return false }
+            guard session.activationState != .activated else { return false }
+            isActivationInFlight = true
+            return true
+        }
+
+        guard shouldActivate else { return }
         session.activate()
     }
 
@@ -102,19 +113,50 @@ final class PhoneWatchSyncManager: NSObject {
 
             guard let data = try? self.encoder.encode(snapshot) else { return }
             guard WCSession.isSupported() else { return }
+            let session = WCSession.default
+            guard self.canSendSnapshot(using: session) else { return }
 
             let context: [String: Any] = [Keys.snapshotData: data]
             do {
-                try WCSession.default.updateApplicationContext(context)
+                try session.updateApplicationContext(context)
+            } catch let wcError as WCError {
+                if Self.canFallbackToBackgroundTransfer(for: wcError) {
+                    session.transferUserInfo(context)
+                }
             } catch {
-                WCSession.default.transferUserInfo(context)
+                session.transferUserInfo(context)
             }
         }
     }
+
+    private func canSendSnapshot(using session: WCSession) -> Bool {
+        guard session.activationState == .activated else {
+            activateSessionIfNeeded()
+            return false
+        }
+
+#if os(iOS)
+        guard session.isPaired, session.isWatchAppInstalled else { return false }
+#endif
+        return true
+    }
+
+    private static func canFallbackToBackgroundTransfer(for error: WCError) -> Bool {
+        switch error.code {
+        case .watchAppNotInstalled, .deviceNotPaired, .sessionNotActivated, .payloadTooLarge:
+            return false
+        default:
+            return true
+        }
+    }
+
 }
 
 extension PhoneWatchSyncManager: WCSessionDelegate {
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: (any Error)?) {
+        activationQueue.sync {
+            isActivationInFlight = false
+        }
         if let error {
             AppLogger.app.error("WCSession activation error: \(error.localizedDescription, privacy: .public)")
             return
@@ -156,7 +198,10 @@ extension PhoneWatchSyncManager: WCSessionDelegate {
     func sessionDidBecomeInactive(_ session: WCSession) {}
 
     func sessionDidDeactivate(_ session: WCSession) {
-        session.activate()
+        activationQueue.sync {
+            isActivationInFlight = false
+        }
+        activateSessionIfNeeded()
     }
 #endif
 }

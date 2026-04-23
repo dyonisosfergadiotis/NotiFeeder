@@ -7,17 +7,18 @@ import UIKit
 // Version 1.2 features: What's New splash + a few inline info bubbles
 
 final class ThemeSettings: ObservableObject {
-    private static let fixedSkyBlueHex = "#A9C8F2"
+    private static let darkModeSkyBlueHex = "#7CC4FF"
+    private static let lightModeSkyBlueHex = "#2F7FD6"
 
     private enum Keys {
         static let feedColorMap = FeedStorage.Keys.feedColorMap
         static let uiAccentHex = "uiAccentHex"
     }
 
-    private static let appGroupSuite = "group.notiFeeder"
+    private static let appGroupSuite = AppGroupDefaults.suiteName
 
-    /// Fixed app accent tone (sky blue) used across the whole UI.
-    @Published private(set) var uiAccentHex: String = ThemeSettings.fixedSkyBlueHex
+    /// Fixed app accent tone used for persistence and widget fallback.
+    @Published private(set) var uiAccentHex: String = ThemeSettings.lightModeSkyBlueHex
 
     private let defaults: UserDefaults
     private(set) var decoder = JSONDecoder()
@@ -30,7 +31,7 @@ final class ThemeSettings: ObservableObject {
         self.defaults = userDefaults
         observeCloudSync()
         loadFeedColors()
-        self.uiAccentHex = Self.fixedSkyBlueHex
+        self.uiAccentHex = Self.lightModeSkyBlueHex
         syncAccentToAppGroup()
     }
 
@@ -41,11 +42,19 @@ final class ThemeSettings: ObservableObject {
     }
 
     var uiAccentColor: Color {
-        Color.fromHex(uiAccentHex)
+        #if canImport(UIKit)
+        Color(UIColor { trait in
+            trait.userInterfaceStyle == .dark
+            ? UIColor(Color.fromHex(Self.darkModeSkyBlueHex))
+            : UIColor(Color.fromHex(Self.lightModeSkyBlueHex))
+        })
+        #else
+        Color.fromHex(Self.lightModeSkyBlueHex)
+        #endif
     }
     
     var uiSwipeColor: Color {
-        Color.fromHex(uiAccentHex) //Color.fromHex(feedcolor)
+        uiAccentColor
     }
 
     func color(for feedURL: String?) -> Color {
@@ -121,14 +130,14 @@ final class ThemeSettings: ObservableObject {
         return "#" + trimmed
     }
 
-    private var appGroupDefaults: UserDefaults? {
-        UserDefaults(suiteName: Self.appGroupSuite)
+    private var appGroupDefaults: UserDefaults {
+        AppGroupDefaults.defaults(suiteName: Self.appGroupSuite, fallback: defaults)
     }
 
     private func syncAccentToAppGroup() {
-        guard let group = appGroupDefaults else { return }
-        if group.string(forKey: Keys.uiAccentHex) != Self.fixedSkyBlueHex {
-            group.set(Self.fixedSkyBlueHex, forKey: Keys.uiAccentHex)
+        let group = appGroupDefaults
+        if group.string(forKey: Keys.uiAccentHex) != Self.lightModeSkyBlueHex {
+            group.set(Self.lightModeSkyBlueHex, forKey: Keys.uiAccentHex)
         }
     }
 

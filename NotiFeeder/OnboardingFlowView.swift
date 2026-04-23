@@ -170,7 +170,8 @@ private struct OnboardingIntroRow: View {
                     .fill(Color.accentColor.opacity(0.14))
                     .frame(width: 36, height: 36)
                 Image(systemName: item.icon)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.system(size: 16))
+                    .fontWeight(.light)
                     .foregroundStyle(Color.accentColor)
             }
             
@@ -282,7 +283,8 @@ struct OnboardingEnterDetailsView: View {
                             .clipShape(Circle())
                     } else if let symbol = viewModel.selectedSystemImageName {
                         Image(systemName: symbol)
-                            .font(.system(size: 34, weight: .semibold))
+                            .font(.system(size: 34))
+                            .fontWeight(.light)
                             .foregroundStyle(.white)
                     }
                 }
@@ -317,7 +319,8 @@ struct OnboardingEnterDetailsView: View {
 
                                 if isSelected {
                                     Image(systemName: "checkmark")
-                                        .font(.caption2.bold())
+                                        .font(.caption2)
+                                        .fontWeight(.light)
                                         .foregroundStyle(.black.opacity(0.7))
                                 }
                             }
@@ -350,6 +353,7 @@ struct OnboardingEnterDetailsView: View {
                                         .fill(Color(.secondarySystemBackground))
                                     Image(systemName: name)
                                         .font(.system(size: 18))
+                                        .fontWeight(.light)
                                         .foregroundStyle(.primary)
                                 }
                             }
@@ -382,9 +386,9 @@ struct OnboardingFeaturesView: View {
             Text("Tipps & Funktionen")
                 .font(.title2.weight(.semibold))
             VStack(alignment: .leading, spacing: 14) {
-                Label { Text("Leere Zustände: Wenn noch nichts da ist, einfach nach unten ziehen um zu aktualisieren.") } icon: { Image(systemName: "tray") }
-                Label { Text("Gelesen markieren: Wische rechts/links, um Artikel als gelesen/ungelesen zu setzen.") } icon: { Image(systemName: "checkmark.circle") }
-                Label { Text("Suche: Finde Artikel und Feeds schnell über die Suche im Tab.") } icon: { Image(systemName: "magnifyingglass") }
+                Label { Text("Leere Zustände: Wenn noch nichts da ist, einfach nach unten ziehen um zu aktualisieren.") } icon: { Image(systemName: "tray").fontWeight(.light) }
+                Label { Text("Gelesen markieren: Wische rechts/links, um Artikel als gelesen/ungelesen zu setzen.") } icon: { Image(systemName: "checkmark.circle").fontWeight(.light) }
+                Label { Text("Suche: Finde Artikel und Feeds schnell über die Suche im Tab.") } icon: { Image(systemName: "magnifyingglass").fontWeight(.light) }
             }
             .padding()
             .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color(.secondarySystemBackground)))

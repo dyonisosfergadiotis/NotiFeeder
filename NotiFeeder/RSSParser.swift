@@ -93,28 +93,30 @@ nonisolated final class RSSParser: NSObject, XMLParserDelegate {
         if elementName == "item" {
             // Falls kein Bild direkt angegeben ist, versuche es aus <img src="..."> herauszulesen
             let rawDescription = currentDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedRawDescription = HTMLText.normalizeHTMLContent(rawDescription)
             if currentImageURL.isEmpty {
                 if let regex = Self.imageSourceRegex {
-                    let range = NSRange(location: 0, length: rawDescription.utf16.count)
-                    if let match = regex.firstMatch(in: rawDescription, options: [], range: range),
-                       let imgRange = Range(match.range(at: 1), in: rawDescription) {
-                        currentImageURL = String(rawDescription[imgRange])
+                    let range = NSRange(location: 0, length: normalizedRawDescription.utf16.count)
+                    if let match = regex.firstMatch(in: normalizedRawDescription, options: [], range: range),
+                       let imgRange = Range(match.range(at: 1), in: normalizedRawDescription) {
+                        currentImageURL = String(normalizedRawDescription[imgRange])
                     }
                 }
             }
 
             // HTML-Tags aus Beschreibung entfernen
-            let cleanDescription = HTMLText.stripHTML(rawDescription)
-            let cleanTitle = currentTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanDescription = HTMLText.stripHTML(normalizedRawDescription)
+            let cleanTitle = HTMLText.normalizePreviewSpacing(in: currentTitle.trimmingCharacters(in: .whitespacesAndNewlines))
+            let cleanAuthor = currentAuthor.trimmingCharacters(in: .whitespacesAndNewlines)
             
             let entry = FeedEntry(
                 title: cleanTitle,
                 shortTitle: generateShortTitle(for: cleanTitle),
                 link: currentLink.trimmingCharacters(in: .whitespacesAndNewlines),
                 content: cleanDescription,
-                contentRaw: rawDescription,
+                contentRaw: normalizedRawDescription,
                 imageURL: currentImageURL.isEmpty ? nil : currentImageURL,
-                author: currentAuthor.isEmpty ? nil : currentAuthor.trimmingCharacters(in: .whitespacesAndNewlines),
+                author: cleanAuthor.isEmpty ? nil : cleanAuthor,
                 pubDateString: currentPubDate.isEmpty ? nil : currentPubDate.trimmingCharacters(in: .whitespacesAndNewlines)
             )
             entries.append(entry)

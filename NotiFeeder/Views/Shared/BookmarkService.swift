@@ -46,6 +46,8 @@ enum BookmarkService {
             let parsed = entry.pubDateString.map { DateParser.parse($0) } ?? .distantPast
             existing.date = (parsed == .distantPast ? Date() : parsed)
             existing.isBookmarked = true
+            existing.isRead = entry.isRead
+            existing.isNew = entry.isNew
         } else {
             let model = FeedEntryModel(
                 title: entry.title,
@@ -62,7 +64,8 @@ enum BookmarkService {
                     return (parsed == .distantPast ? Date() : parsed)
                 }(),
                 isBookmarked: true,
-                isRead: entry.isRead
+                isRead: entry.isRead,
+                isNew: entry.isNew
             )
             context.insert(model)
         }

@@ -6,10 +6,11 @@ enum FeedStorage {
         static let cachedEntries = "cachedEntries"
         static let feedColorMap = "feedColorMap"
         static let savedArticles = "savedArticles"
+        static let articleSummaries = "articleSummaries"
         static let readArticleIDs = "readArticleIDs"
         static let bookmarkedArticleIDs = "bookmarkedArticleIDs"
+        static let lastSuccessfulFeedRefresh = "feed.lastSuccessfulRefreshAt"
         static let profileDisplayName = "profile.displayName"
-        static let uiCardsPreviewLines = "ui.cards.previewLines"
         static let uiCardsStyleFullColor = "ui.cards.style.fullColor"
         static let readerFontScale = "readerFontScale"
         static let readerFontFamily = "readerFontFamily"
@@ -17,10 +18,10 @@ enum FeedStorage {
         static let readerTextAlignment = "readerTextAlignment"
     }
 
-    static let suiteName = "group.notiFeeder"
+    static let suiteName = AppGroupDefaults.suiteName
 
     static var defaults: UserDefaults {
-        UserDefaults(suiteName: suiteName) ?? .standard
+        AppGroupDefaults.defaults(suiteName: suiteName, fallback: .standard)
     }
 
     static func migrateIfNeeded() {
@@ -32,10 +33,11 @@ enum FeedStorage {
             Keys.cachedEntries,
             Keys.feedColorMap,
             Keys.savedArticles,
+            Keys.articleSummaries,
             Keys.readArticleIDs,
             Keys.bookmarkedArticleIDs,
+            Keys.lastSuccessfulFeedRefresh,
             Keys.profileDisplayName,
-            Keys.uiCardsPreviewLines,
             Keys.uiCardsStyleFullColor,
             Keys.readerFontScale,
             Keys.readerFontFamily,
@@ -101,7 +103,22 @@ enum FeedCacheSync {
     }
 
     static func syncIfNeeded(for key: String) {
+        let groupDefaults = FeedStorage.defaults
+        let standardDefaults = UserDefaults.standard
+        let tokenKey = syncTokenKey(for: key)
+
+        let groupData = groupDefaults.data(forKey: key)
+        let standardData = standardDefaults.data(forKey: key)
+        let groupToken = groupDefaults.double(forKey: tokenKey)
+        let standardToken = standardDefaults.double(forKey: tokenKey)
+
         guard let best = bestAvailableData(for: key) else { return }
-        write(best, for: key)
+
+        let bestToken = max(groupToken, standardToken)
+        let storesAlreadyAligned = groupData == standardData && groupToken == standardToken
+        guard !storesAlreadyAligned else { return }
+
+        // Preserve existing sync token semantics; never stamp "now" during local reconciliation.
+        _ = write(best, for: key, token: bestToken > 0 ? bestToken : 0)
     }
 }

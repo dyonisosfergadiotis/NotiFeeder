@@ -69,6 +69,7 @@ struct InfoBubble<Content: View>: View {
 
             Button(action: { hints.dismiss(id) }) {
                 Image(systemName: "xmark.circle.fill")
+                    .fontWeight(.light)
                     .foregroundStyle(.secondary)
                     .imageScale(.large)
                     .padding(6)
@@ -118,4 +119,3 @@ extension View {
     }
     .padding()
 }
-

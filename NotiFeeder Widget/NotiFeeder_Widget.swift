@@ -115,6 +115,11 @@ struct ChooseLargeWidgetPositionIntent: WidgetConfigurationIntent {
     }
 }
 
+struct LockScreenRectangularIntent: WidgetConfigurationIntent {
+    static var title: LocalizedStringResource = "Sperrbildschirm (Rechteckig)"
+    static var description = IntentDescription("Zeigt den neuesten ungelesenen Artikel als rechteckiges Sperrbildschirm-Widget.")
+}
+
 struct WidgetUnreadItem: Identifiable, Equatable {
     let id: UUID
     let title: String
@@ -124,6 +129,33 @@ struct WidgetUnreadItem: Identifiable, Equatable {
     let imageURL: URL?
     let link: String
     let preview: String? // Added preview property
+    let isRead: Bool
+    let isNew: Bool
+    let isBookmarked: Bool
+
+    init(id: UUID,
+         title: String,
+         feedTitle: String,
+         feedColor: Color?,
+         date: Date,
+         imageURL: URL?,
+         link: String,
+         preview: String?,
+         isRead: Bool = true,
+         isNew: Bool = false,
+         isBookmarked: Bool = false) {
+        self.id = id
+        self.title = title
+        self.feedTitle = feedTitle
+        self.feedColor = feedColor
+        self.date = date
+        self.imageURL = imageURL
+        self.link = link
+        self.preview = preview
+        self.isRead = isRead
+        self.isNew = isNew
+        self.isBookmarked = isBookmarked
+    }
 }
 
 struct WidgetEntry: TimelineEntry {
@@ -135,7 +167,7 @@ struct WidgetEntry: TimelineEntry {
 }
 
 private enum WidgetAppearance {
-    static let suiteName = "group.notiFeeder"
+    static let suiteName = AppGroupDefaults.suiteName
     static let transparentEnabledKey = "nf_widget_transparent_enabled"
     static let accentHexKey = "uiAccentHex"
     static let iconSizeKey = "nf_widget_icon_size"
@@ -147,7 +179,7 @@ private enum WidgetAppearance {
     static let verticalBiasKey = "nf_widget_vertical_bias"
 
     static func defaults() -> UserDefaults {
-        UserDefaults(suiteName: suiteName) ?? .standard
+        AppGroupDefaults.defaults(suiteName: suiteName, fallback: .standard)
     }
 
     static func isTransparentEnabled() -> Bool {
@@ -240,10 +272,69 @@ private struct WidgetFeedEntryCache: Codable {
     let pubDateString: String
     let imageURL: String?
     let isRead: Bool
+    let isNew: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case link
+        case content
+        case author
+        case sourceTitle
+        case feedURL
+        case pubDateString
+        case imageURL
+        case isRead
+        case isNew
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        title = try container.decode(String.self, forKey: .title)
+        link = try container.decode(String.self, forKey: .link)
+        content = try container.decodeIfPresent(String.self, forKey: .content)
+        author = try container.decodeIfPresent(String.self, forKey: .author)
+        sourceTitle = try container.decodeIfPresent(String.self, forKey: .sourceTitle)
+        feedURL = try container.decodeIfPresent(String.self, forKey: .feedURL)
+        pubDateString = try container.decode(String.self, forKey: .pubDateString)
+        imageURL = try container.decodeIfPresent(String.self, forKey: .imageURL)
+        let decodedIsRead = try container.decodeIfPresent(Bool.self, forKey: .isRead) ?? false
+        isRead = decodedIsRead
+        let decodedIsNew = try container.decodeIfPresent(Bool.self, forKey: .isNew) ?? !decodedIsRead
+        isNew = decodedIsRead ? false : decodedIsNew
+    }
 
     static func decode(from data: Data) -> [WidgetFeedEntryCache]? {
         let decoder = JSONDecoder()
         return try? decoder.decode([WidgetFeedEntryCache].self, from: data)
+    }
+}
+
+private enum WidgetQuickFilterContext: String {
+    case all
+    case unread
+    case today
+    case bookmarks
+}
+
+private enum WidgetSelectionContextStore {
+    static let selectedFeedIDsKey = "nf_widget_selected_feed_ids_v1"
+    static let quickFilterKey = "nf_widget_quick_filter_v1"
+    static let lockScreenCurrentLinkKey = "nf_widget_lockscreen_current_link_v1"
+
+    static func selectedFeedIDs(from defaults: UserDefaults) -> Set<String> {
+        guard let data = defaults.data(forKey: selectedFeedIDsKey),
+              let ids = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(ids)
+    }
+
+    static func quickFilter(from defaults: UserDefaults) -> WidgetQuickFilterContext {
+        guard let raw = defaults.string(forKey: quickFilterKey),
+              let filter = WidgetQuickFilterContext(rawValue: raw) else {
+            return .all
+        }
+        return filter
     }
 }
 
@@ -295,19 +386,26 @@ private enum HTMLText {
             .characterEncoding: String.Encoding.utf8.rawValue
         ]
         if let attributed = try? NSAttributedString(data: data, options: options, documentAttributes: nil) {
-            return attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return normalizePreviewSpacing(in: attributed.string)
         }
-        return htmlString
+        return normalizePreviewSpacing(in: htmlString)
+    }
+
+    private static func normalizePreviewSpacing(in input: String) -> String {
+        let normalized = input
+            .replacingOccurrences(of: "\\s+,", with: ",", options: .regularExpression)
+        return normalized.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
 // MARK: - Provider
 
 private struct WidgetCore {
-    static let suiteName = "group.notiFeeder"
+    static let suiteName = AppGroupDefaults.suiteName
+    static let bookmarkedArticleIDsKey = "bookmarkedArticleIDs"
 
     static func loadEntry(for family: WidgetFamily, position: WidgetGridPosition, displaySize: CGSize? = nil) -> WidgetEntry {
-        let defaults = UserDefaults(suiteName: suiteName) ?? UserDefaults.standard
+        let defaults = AppGroupDefaults.defaults(suiteName: suiteName, fallback: .standard)
 
         if let displaySize {
             WidgetSizeCache.update(family: family, displaySize: displaySize)
@@ -329,7 +427,16 @@ private struct WidgetCore {
             return parsed
         }
 
-        let sorted = cachedEntries.sorted { lhs, rhs in
+        let bookmarkedLinks = loadBookmarkedLinks(from: defaults)
+        let contextEntries = applySelectionContext(
+            to: cachedEntries,
+            for: family,
+            defaults: defaults,
+            bookmarkedLinks: bookmarkedLinks,
+            parsedDate: parsedDate
+        )
+
+        let sorted = contextEntries.sorted { lhs, rhs in
             let ld = parsedDate(for: lhs.pubDateString)
             let rd = parsedDate(for: rhs.pubDateString)
             return ld > rd
@@ -340,11 +447,22 @@ private struct WidgetCore {
         case .systemSmall: maxCount = 1
         case .systemMedium: maxCount = 2
         case .systemLarge: maxCount = 5
+        case .accessoryRectangular: maxCount = 1
         default: maxCount = 2
         }
 
         let unread = sorted.filter { !$0.isRead }
-        let selected = (unread.isEmpty ? sorted : unread).prefix(maxCount)
+        let selected: ArraySlice<WidgetFeedEntryCache>
+        if family == .accessoryRectangular {
+            // Lockscreen: prioritize unread even if older, otherwise newest read.
+            selected = (unread.isEmpty ? sorted : unread).prefix(maxCount)
+        } else {
+            selected = (unread.isEmpty ? sorted : unread).prefix(maxCount)
+        }
+
+        if family == .accessoryRectangular {
+            persistLockScreenCurrentLink(selected.first?.link, defaults: defaults)
+        }
 
         let backgroundImage = WidgetAppearance.isTransparentEnabled() ? loadBackgroundImage(for: family, position: position) : nil
 
@@ -354,7 +472,7 @@ private struct WidgetCore {
                 return parsed == .distantPast ? Date() : parsed
             }()
             let url: URL?
-            if family == .systemSmall {
+            if family == .systemSmall || family == .accessoryRectangular {
                 url = nil
             } else if let s = entry.imageURL, let u = URL(string: s) {
                 url = u
@@ -369,7 +487,10 @@ private struct WidgetCore {
                 date: date,
                 imageURL: url,
                 link: entry.link,
-                preview: HTMLText.stripHTML(entry.content)
+                preview: HTMLText.stripHTML(entry.content),
+                isRead: entry.isRead,
+                isNew: entry.isNew,
+                isBookmarked: bookmarkedLinks.contains(entry.link)
             )
         }
 
@@ -383,6 +504,74 @@ private struct WidgetCore {
 
         let refreshToken = WidgetAppearance.refreshToken()
         return WidgetEntry(date: Date().addingTimeInterval(refreshToken.truncatingRemainder(dividingBy: 1)), items: items, accent: WidgetAppearance.accentColor(), background: backgroundImage, position: position)
+    }
+
+    private static func persistLockScreenCurrentLink(_ link: String?, defaults: UserDefaults) {
+        guard let link, !link.isEmpty else {
+            defaults.removeObject(forKey: WidgetSelectionContextStore.lockScreenCurrentLinkKey)
+            return
+        }
+        defaults.set(link, forKey: WidgetSelectionContextStore.lockScreenCurrentLinkKey)
+    }
+
+    private static func applySelectionContext(
+        to entries: [WidgetFeedEntryCache],
+        for family: WidgetFamily,
+        defaults: UserDefaults,
+        bookmarkedLinks: Set<String>,
+        parsedDate: (String) -> Date
+    ) -> [WidgetFeedEntryCache] {
+        var filtered = entries
+
+        let selectedFeedIDs = WidgetSelectionContextStore.selectedFeedIDs(from: defaults)
+        if !selectedFeedIDs.isEmpty {
+            let selectedHosts = Set(selectedFeedIDs.compactMap { normalizedHost(from: $0) })
+            filtered = filtered.filter { entry in
+                if let feedURL = entry.feedURL, selectedFeedIDs.contains(feedURL) {
+                    return true
+                }
+                guard !selectedHosts.isEmpty,
+                      let articleHost = normalizedHost(from: entry.link) else {
+                    return false
+                }
+                return selectedHosts.contains(articleHost)
+            }
+        }
+
+        let quickFilter = WidgetSelectionContextStore.quickFilter(from: defaults)
+        switch quickFilter {
+        case .all:
+            break
+        case .bookmarks:
+            filtered = filtered.filter { bookmarkedLinks.contains($0.link) }
+        case .today:
+            filtered = filtered.filter {
+                let date = parsedDate($0.pubDateString)
+                return date != .distantPast && Calendar.current.isDateInToday(date)
+            }
+        case .unread:
+            // Lockscreen has explicit unread-first/read-fallback behavior.
+            if family != .accessoryRectangular {
+                filtered = filtered.filter { !$0.isRead }
+            }
+        }
+
+        return filtered
+    }
+
+    private static func normalizedHost(from urlString: String?) -> String? {
+        guard let urlString, let host = URL(string: urlString)?.host?.lowercased() else {
+            return nil
+        }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    static func loadBookmarkedLinks(from defaults: UserDefaults) -> Set<String> {
+        guard let data = defaults.data(forKey: bookmarkedArticleIDsKey),
+              let links = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(links)
     }
 
     static func feedColor(for title: String?) -> Color? {
@@ -940,6 +1129,40 @@ struct LargeWidgetProvider: AppIntentTimelineProvider {
     }
 }
 
+struct LockScreenRectangularProvider: AppIntentTimelineProvider {
+    typealias Entry = WidgetEntry
+    typealias Intent = LockScreenRectangularIntent
+
+    func placeholder(in context: Context) -> WidgetEntry {
+        let now = Date()
+        let sampleItems: [WidgetUnreadItem] = [
+            WidgetUnreadItem(
+                id: UUID(),
+                title: "Neue iOS API vereinfacht Widget-Deep-Links",
+                feedTitle: "NotiFeeder Blog",
+                feedColor: nil,
+                date: now.addingTimeInterval(-900),
+                imageURL: nil,
+                link: "https://example.com/widget-deeplink",
+                preview: "Kurz erklärt, wie du aus Widgets direkt in die passende Artikelansicht springst.",
+                isRead: false,
+                isBookmarked: false
+            )
+        ]
+        return WidgetEntry(date: now, items: sampleItems, accent: .accentColor, background: nil, position: .topLeft)
+    }
+
+    func snapshot(for configuration: LockScreenRectangularIntent, in context: Context) async -> WidgetEntry {
+        WidgetCore.loadEntry(for: context.family, position: .topLeft, displaySize: context.displaySize)
+    }
+
+    func timeline(for configuration: LockScreenRectangularIntent, in context: Context) async -> Timeline<WidgetEntry> {
+        let entry = WidgetCore.loadEntry(for: context.family, position: .topLeft, displaySize: context.displaySize)
+        let nextUpdate = Calendar.current.date(byAdding: .minute, value: 15, to: Date()) ?? Date().addingTimeInterval(900)
+        return Timeline(entries: [entry], policy: .after(nextUpdate))
+    }
+}
+
 // MARK: - View
 
 struct NotiFeeder_WidgetEntryView: View {
@@ -967,12 +1190,24 @@ struct NotiFeeder_WidgetEntryView: View {
     }
 
     var body: some View {
-        contentCard
+        Group {
+            if family == .accessoryRectangular {
+                contentCard
+            } else {
+                contentCard
+                    .containerBackground(for: .widget) {
+                        backgroundView
+                    }
+            }
+        }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .environment(\.widgetRenderingMode, .fullColor)
-            .containerBackground(for: .widget) {
-                backgroundView
-            }
+            .widgetURL(family == .accessoryRectangular ? primaryArticleURL : nil)
+    }
+
+    private var primaryArticleURL: URL? {
+        guard let item = entry.items.first else { return nil }
+        return articleDeepLink(for: item.link)
     }
 
     @ViewBuilder
@@ -986,6 +1221,8 @@ struct NotiFeeder_WidgetEntryView: View {
             card {
                 largerView
             }
+        case .accessoryRectangular:
+            accessoryRectangularView
         default:
             card {
                 smallView
@@ -1105,6 +1342,81 @@ struct NotiFeeder_WidgetEntryView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var accessoryRectangularView: some View {
+        if let item = entry.items.first {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    HStack(spacing: 0) {
+                        Text(item.feedTitle.isEmpty ? "NotiFeeder" : item.feedTitle)
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    HStack(spacing: 3) {
+                        if item.isNew {
+                            Image(systemName: "rays")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(item.feedColor ?? entry.accent)
+                                .widgetAccentable()
+                        } else {
+                            Image(systemName: "eye.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text(lockScreenDateLabel(for: item.date))
+                            .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Text(item.title.isEmpty ? "Keine Artikel" : item.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(1)
+                    .multilineTextAlignment(.leading)
+                    .foregroundStyle(.primary)
+
+                Text(lockScreenPreview(for: item))
+                    .font(.system(size: 10.5))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Text("Keine Artikel")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func lockScreenDateLabel(for date: Date) -> String {
+        if Calendar.current.isDateInToday(date) {
+            return date.formatted(.dateTime.hour().minute().locale(Locale(identifier: "de_DE")))
+        }
+        return displayDateLabel(date) ?? DateFormatter.dayMonth.string(from: date)
+    }
+
+    private func lockScreenPreview(for item: WidgetUnreadItem) -> String {
+        let cleanedPreview = item.preview?
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let cleanedPreview, !cleanedPreview.isEmpty {
+            return cleanedPreview
+        }
+
+        if let host = URL(string: item.link)?.host, !host.isEmpty {
+            return host
+        }
+
+        return "Zum Lesen öffnen"
     }
 
     private var backgroundView: some View {
@@ -1259,6 +1571,19 @@ struct NotiFeeder_Widget_Large: Widget {
     }
 }
 
+struct NotiFeeder_Widget_LockScreenRectangular: Widget {
+    let kind: String = "NotiFeeder_Widget_LockScreenRectangular"
+
+    var body: some WidgetConfiguration {
+        AppIntentConfiguration(kind: kind, intent: LockScreenRectangularIntent.self, provider: LockScreenRectangularProvider()) { entry in
+            NotiFeeder_WidgetEntryView(entry: entry)
+        }
+        .configurationDisplayName("NotiFeeder (Sperrbildschirm)")
+        .description("Zeigt einen Artikel als rechteckiges Sperrbildschirm-Widget mit Titel und Vorschau.")
+        .supportedFamilies([.accessoryRectangular])
+    }
+}
+
 private extension DateFormatter {
     static let dayMonth: DateFormatter = {
         let f = DateFormatter()
@@ -1331,5 +1656,30 @@ public extension Color {
             WidgetUnreadItem(id: UUID(), title: "What's New in iOS", feedTitle: "Apple Newsroom", feedColor: nil, date: Date().addingTimeInterval(-7200), imageURL: nil, link: "https://apple.com/news/ios", preview: nil)
         ],
         accent: .accentColor, background: nil, position: .topLeft
+    )
+}
+
+#Preview(as: .accessoryRectangular) {
+    NotiFeeder_Widget_LockScreenRectangular()
+} timeline: {
+    WidgetEntry(
+        date: Date(),
+        items: [
+            WidgetUnreadItem(
+                id: UUID(),
+                title: "Neuer Artikel: So bleibt dein RSS-Workflow fokussiert",
+                feedTitle: "NotiFeeder Blog",
+                feedColor: .orange,
+                date: Date().addingTimeInterval(-900),
+                imageURL: nil,
+                link: "https://example.com/rss-workflow",
+                preview: "Eine kurze Anleitung fuer bessere Lesbarkeit, klare Priorisierung und weniger Feed-Rauschen.",
+                isRead: false,
+                isBookmarked: false
+            )
+        ],
+        accent: .accentColor,
+        background: nil,
+        position: .topLeft
     )
 }

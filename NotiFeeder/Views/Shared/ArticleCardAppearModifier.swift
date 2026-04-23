@@ -19,24 +19,21 @@ private struct ArticleCardAppearModifier: ViewModifier {
 
     private var scale: CGFloat {
         switch phase {
-        case .initial: return 0.975
-        case .arrival: return 1.015
+        case .initial: return 0.992
+        case .arrival: return 1.004
         case .settled: return 1.0
         }
     }
 
     private var offsetY: CGFloat {
         switch phase {
-        case .initial: return 6
+        case .initial: return 10
         case .arrival, .settled: return 0
         }
     }
 
     private var blurRadius: CGFloat {
-        switch phase {
-        case .initial: return 4
-        case .arrival, .settled: return 0
-        }
+        0
     }
 
     private var opacity: Double {
@@ -49,24 +46,24 @@ private struct ArticleCardAppearModifier: ViewModifier {
     private var glowOpacity: Double {
         switch phase {
         case .initial: return 0.0
-        case .arrival: return 0.18
-        case .settled: return 0.08
+        case .arrival: return 0.08
+        case .settled: return 0.0
         }
     }
 
     private var glowRadius: CGFloat {
         switch phase {
         case .initial: return 0
-        case .arrival: return 22
-        case .settled: return 16
+        case .arrival: return 12
+        case .settled: return 0
         }
     }
 
     private var glowYOffset: CGFloat {
         switch phase {
         case .initial: return 0
-        case .arrival: return 8
-        case .settled: return 5
+        case .arrival: return 4
+        case .settled: return 0
         }
     }
 
@@ -84,13 +81,6 @@ private struct ArticleCardAppearModifier: ViewModifier {
                 guard !didAnimate else { return }
                 lastTrigger = trigger
                 runAnimation(reset: false)
-            }
-            .onDisappear {
-                guard !reduceMotion else { return }
-                withAnimation(.easeInOut(duration: 0.16)) {
-                    phase = .initial
-                }
-                didAnimate = false
             }
             .onChange(of: trigger) { _, newValue in
                 guard lastTrigger != newValue else { return }
@@ -111,14 +101,14 @@ private struct ArticleCardAppearModifier: ViewModifier {
         }
         didAnimate = true
         let clamped = max(0.2, min(1.0, speedFactor))
-        let arrival = Animation.easeOut(duration: 0.13 * clamped).delay(delay)
-        let settle = Animation.spring(response: 0.19 * clamped,
-                                      dampingFraction: 0.8,
+        let arrival = Animation.easeOut(duration: 0.16 * clamped).delay(delay)
+        let settle = Animation.spring(response: 0.24 * clamped,
+                                      dampingFraction: 0.88,
                                       blendDuration: 0.1 * clamped)
         withAnimation(arrival) {
             phase = .arrival
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + (0.13 * clamped) + delay) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (0.16 * clamped) + delay) {
             withAnimation(settle) {
                 phase = .settled
             }

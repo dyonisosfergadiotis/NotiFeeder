@@ -25,6 +25,7 @@ final class FeedEntryModel: Identifiable, Hashable {
     // Flags für Status
     var isBookmarked: Bool = false
     var isRead: Bool = false
+    var isNew: Bool = false
 
     init(
         id: UUID = UUID(),
@@ -39,7 +40,8 @@ final class FeedEntryModel: Identifiable, Hashable {
         pubDateString: String? = nil,
         date: Date = Date(),
         isBookmarked: Bool = false,
-        isRead: Bool = false
+        isRead: Bool = false,
+        isNew: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -54,6 +56,7 @@ final class FeedEntryModel: Identifiable, Hashable {
         self.date = date
         self.isBookmarked = isBookmarked
         self.isRead = isRead
+        self.isNew = isNew
     }
     static func == (lhs: FeedEntryModel, rhs: FeedEntryModel) -> Bool {
         lhs.id == rhs.id

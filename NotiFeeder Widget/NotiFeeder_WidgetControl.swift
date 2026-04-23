@@ -22,7 +22,12 @@ struct NotiFeeder_WidgetControl: ControlWidget {
                 isOn: value.isRunning,
                 action: StartTimerIntent(value.name)
             ) { isRunning in
-                Label(isRunning ? "On" : "Off", systemImage: "timer")
+                Label {
+                    Text(isRunning ? "On" : "Off")
+                } icon: {
+                    Image(systemName: "timer")
+                        .fontWeight(.light)
+                }
             }
         }
         .displayName("Timer")

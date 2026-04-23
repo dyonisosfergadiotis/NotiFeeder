@@ -39,6 +39,7 @@ enum UIStylePolicy {
     static let glassAccentOpacity: Double = 0.08
     static let cardTintOpacity: Double = 0.10
     static let cardTintOpacityRead: Double = 0.08
+    static let fullColorCardInteriorOpacity: Double = 0.10
     static let fullColorCardTintOpacity: Double = 0.34
     static let fullColorCardTintOpacityRead: Double = 0.13
     static let cardBorderOpacityUnread: Double = 0.40

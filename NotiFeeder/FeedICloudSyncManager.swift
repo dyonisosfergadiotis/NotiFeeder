@@ -46,11 +46,6 @@ final class FeedICloudSyncManager {
                 notification: .feedProfileDidSyncFromICloud
             ),
             SyncedPreference(
-                key: FeedStorage.Keys.uiCardsPreviewLines,
-                defaultValue: .int(3),
-                notification: .feedCardPreferencesDidSyncFromICloud
-            ),
-            SyncedPreference(
                 key: FeedStorage.Keys.uiCardsStyleFullColor,
                 defaultValue: .bool(false),
                 notification: .feedCardPreferencesDidSyncFromICloud

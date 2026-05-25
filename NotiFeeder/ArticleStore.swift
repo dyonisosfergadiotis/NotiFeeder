@@ -98,7 +98,10 @@ final class ArticleStore: ObservableObject {
         queue.async { [weak self] in
             guard let self = self else { return }
             if let data = try? self.encoder.encode(snapshot) {
-                _ = FeedCacheSync.write(data, for: self.articlesKey)
+                let token = FeedCacheSync.write(data, for: self.articlesKey)
+                Task { @MainActor in
+                    FeedCloudKitSyncManager.shared.uploadLocalData(data, token: token, for: self.articlesKey)
+                }
             }
         }
     }
@@ -118,9 +121,9 @@ final class ArticleStore: ObservableObject {
         queue.async { [weak self] in
             guard let self = self else { return }
             if let data = try? self.encoder.encode(array) {
-                _ = FeedCacheSync.write(data, for: self.readKey)
+                let token = FeedCacheSync.write(data, for: self.readKey)
                 Task { @MainActor in
-                    FeedICloudSyncManager.shared.pushLocalData(data, for: self.readKey)
+                    FeedCloudKitSyncManager.shared.uploadLocalData(data, token: token, for: self.readKey)
                 }
             }
         }
@@ -174,6 +177,10 @@ final class ArticleStore: ObservableObject {
     }
 
     func setRead(_ isRead: Bool, articleID: String) {
+        Task { @MainActor in
+            FeedCloudKitSyncManager.shared.noteLocalMutation(for: readKey)
+        }
+
         if isRead {
             readArticleIDs.insert(articleID)
         } else {
@@ -242,8 +249,11 @@ final class ArticleStore: ObservableObject {
 
     @MainActor
     func syncFromCloudIfNeeded() {
-        FeedICloudSyncManager.shared.syncDataFromCloudIfNeeded(for: readKey)
-        loadFromDisk()
+        Task { @MainActor in
+            await FeedCloudKitSyncManager.shared.syncDataFromCloudIfNeeded(for: readKey)
+            await FeedCloudKitSyncManager.shared.syncDataFromCloudIfNeeded(for: articlesKey)
+            loadFromDisk()
+        }
     }
 
     private func observeCloudSync() {
@@ -257,7 +267,15 @@ final class ArticleStore: ObservableObject {
             self?.loadFromDisk()
         }
 
-        cloudSyncObservers = [readObserver]
+        let articlesObserver = center.addObserver(
+            forName: .feedSavedArticlesDidSyncFromCloudKit,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.loadFromDisk()
+        }
+
+        cloudSyncObservers = [readObserver, articlesObserver]
     }
 
     private func trimStoredSummariesIfNeeded() {

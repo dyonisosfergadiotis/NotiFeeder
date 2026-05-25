@@ -71,6 +71,7 @@ struct ContentView: View {
             FeedCacheSync.syncIfNeeded(for: FeedStorage.Keys.bookmarkedArticleIDs)
             FeedICloudSyncManager.shared.configureIfNeeded()
             FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
+            FeedCloudKitSyncManager.shared.configureIfNeeded()
             theme.syncFromCloudIfNeeded()
             ArticleStore.shared.syncFromCloudIfNeeded()
             loadFeeds()
@@ -85,6 +86,9 @@ struct ContentView: View {
                 }
             }
             pathMonitor.start(queue: pathQueue)
+            Task { @MainActor in
+                await FeedCloudKitSyncManager.shared.syncAllFromCloudIfPossible()
+            }
         }
         .onDisappear {
             pathMonitor.cancel()
@@ -98,6 +102,9 @@ struct ContentView: View {
             FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
             theme.syncFromCloudIfNeeded()
             ArticleStore.shared.syncFromCloudIfNeeded()
+            Task { @MainActor in
+                await FeedCloudKitSyncManager.shared.syncAllFromCloudIfPossible()
+            }
         }
         .onChange(of: showOnboarding) { _, _ in
             evaluateProfileSetupPresentation()
@@ -214,6 +221,7 @@ struct FeedListView: View {
     @State private var feedsReloadTask: Task<Void, Never>? = nil
     @State private var statusBarRefreshTask: Task<Void, Never>? = nil
     @State private var widgetTimelineReloadTask: Task<Void, Never>? = nil
+    @State private var entriesCachePersistTask: Task<Void, Never>? = nil
     @State private var lastRefreshDate: Date? = nil
     @State private var bookmarkedLinks: Set<String> = []
     @State private var pendingInsertedEntryIDs: Set<String> = []
@@ -256,6 +264,7 @@ struct FeedListView: View {
     private let initialRenderBatchSize: Int = 60
     private let renderBatchSize: Int = 40
     private let renderPrefetchThreshold: Int = 16
+    private let entriesCachePersistDelayNanoseconds: UInt64 = 180_000_000
     private let launchScreenSafetyAutoHideDelay: TimeInterval = 0.12
     private let launchScreenMinimumVisibleDuration: TimeInterval = 0
     private let launchScreenHideAnimationDuration: TimeInterval = 0.16
@@ -353,25 +362,23 @@ struct FeedListView: View {
             ZStack(alignment: .top) {
                 List {
                     ForEach(daySections) { section in
-                        Section {
-                            if section.title != "Heute" {
-                                daySectionDividerRow(title: section.title)
-                                    .listRowSeparator(.hidden)
-                                    .listRowBackground(Color.clear)
-                            }
+                        if section.title != "Heute" {
+                            daySectionDividerRow(title: section.title)
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(Color.clear)
+                        }
 
-                            ForEach(section.entries) { dayEntry in
-                                trackedEntryRow(
-                                    for: dayEntry.entry,
-                                    index: dayEntry.index,
-                                    lookup: lookup
+                        ForEach(section.entries) { dayEntry in
+                            trackedEntryRow(
+                                for: dayEntry.entry,
+                                index: dayEntry.index,
+                                lookup: lookup
+                            )
+                            .onAppear {
+                                loadMoreEntriesIfNeeded(
+                                    currentIndex: dayEntry.index,
+                                    totalVisibleCount: visibleEntries.count
                                 )
-                                .onAppear {
-                                    loadMoreEntriesIfNeeded(
-                                        currentIndex: dayEntry.index,
-                                        totalVisibleCount: visibleEntries.count
-                                    )
-                                }
                             }
                         }
                     }
@@ -806,7 +813,7 @@ struct FeedListView: View {
                 triggerInitialLoadIfPossible()
                 pruneEntriesForRemovedFeeds()
                 Task { @MainActor in
-                    syncCloudStateFromICloud()
+                    await syncCloudStateFromICloud()
                 }
                 pushSnapshotToWatch()
             }
@@ -822,8 +829,13 @@ struct FeedListView: View {
                 refreshDerivedFeedState()
             }
             .onChange(of: networkState.isOffline) { _, isOffline in
-                guard isOffline else { return }
-                completeInitialFeedLoad()
+                if isOffline {
+                    completeInitialFeedLoad()
+                } else {
+                    Task { @MainActor in
+                        await syncCloudStateFromICloud()
+                    }
+                }
             }
             .onChange(of: showOnlyBookmarks) { _, _ in
                 persistWidgetSelectionContext()
@@ -831,8 +843,8 @@ struct FeedListView: View {
                 refreshDerivedFeedState()
             }
             .onChange(of: store.readArticleIDs) { oldValue, newValue in
-                applyReadStateFromStore()
-                persistEntriesCache()
+                applyReadStateChange(from: oldValue, to: newValue)
+                scheduleEntriesCachePersist()
                 pushSnapshotToWatch()
                 let shouldReload = shouldReloadWidgetForReadStateChange(
                     from: oldValue,
@@ -872,7 +884,7 @@ struct FeedListView: View {
         return contentWithStateObservers
             .onReceive(NotificationCenter.default.publisher(for: .feedBookmarkedArticleIDsDidSyncFromICloud)) { _ in
                 Task { @MainActor in
-                    BookmarkService.syncBookmarksFromCloudIfNeeded(context: modelContext)
+                    await BookmarkService.syncBookmarksFromCloudIfNeeded(context: modelContext)
                     refreshBookmarkedLinks()
                 }
             }
@@ -883,6 +895,7 @@ struct FeedListView: View {
                 guard newPhase == .active else { return }
                 restoreCachedEntries()
                 Task { @MainActor in
+                    await syncCloudStateFromICloud()
                     await refreshOnAppActivationIfNeeded()
                 }
             }
@@ -896,6 +909,7 @@ struct FeedListView: View {
                 feedsReloadTask?.cancel()
                 statusBarRefreshTask?.cancel()
                 widgetTimelineReloadTask?.cancel()
+                entriesCachePersistTask?.cancel()
                 insertionAnimationCleanupTask?.cancel()
             }
     }
@@ -1168,13 +1182,9 @@ struct FeedListView: View {
                             entries[idx].isNew = false
                         }
                     }
-                    if isRead {
-                        store.markRecentlyRead(articleID: entry.link)
-                    } else {
-                        store.unmarkRecentlyRead(articleID: entry.link)
-                    }
+                    store.unmarkRecentlyRead(articleID: entry.link)
                 }
-                persistEntriesCache()
+                scheduleEntriesCachePersist()
             },
             onToggleBookmark: { isBookmarked in
                 withAnimation(.easeInOut(duration: 0.18)) {
@@ -1213,7 +1223,6 @@ struct FeedListView: View {
         
         Button {
             var navigationEntry = detailEntry
-            // Opening an unread item -> becomes read + recently; if already read, never becomes recently again
             if !entry.isRead {
                 store.markRecentlyRead(articleID: detailEntry.link)
                 store.setRead(true, articleID: detailEntry.link)
@@ -1766,22 +1775,52 @@ extension FeedListView {
     }
 
     @MainActor
-    private func syncCloudStateFromICloud() {
+    private func syncCloudStateFromICloud() async {
         FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
         theme.syncFromCloudIfNeeded()
+        await FeedCloudKitSyncManager.shared.syncAllFromCloudIfPossible()
         store.syncFromCloudIfNeeded()
-        BookmarkService.syncBookmarksFromCloudIfNeeded(context: modelContext)
+        await BookmarkService.syncBookmarksFromCloudIfNeeded(context: modelContext)
         refreshBookmarkedLinks()
         applyReadStateFromStore()
     }
 
     private func applyReadStateFromStore() {
-        let readIDs = store.readArticleIDs
-        for index in entries.indices {
-            entries[index].isRead = readIDs.contains(entries[index].link)
-            if entries[index].isRead {
-                entries[index].isNew = false
+        applyReadState(readIDs: store.readArticleIDs)
+    }
+
+    private func applyReadStateChange(from oldValue: Set<String>, to newValue: Set<String>) {
+        let changedLinks = oldValue.symmetricDifference(newValue)
+        guard !changedLinks.isEmpty else { return }
+        applyReadState(readIDs: newValue, changedLinks: Set(changedLinks))
+    }
+
+    private func applyReadState(readIDs: Set<String>, changedLinks: Set<String>? = nil) {
+        guard !entries.isEmpty else { return }
+
+        var updatedEntries = entries
+        var didUpdate = false
+
+        for index in updatedEntries.indices {
+            let link = updatedEntries[index].link
+            if let changedLinks, !changedLinks.contains(link) {
+                continue
             }
+
+            let shouldBeRead = readIDs.contains(link)
+            if updatedEntries[index].isRead != shouldBeRead {
+                updatedEntries[index].isRead = shouldBeRead
+                didUpdate = true
+            }
+
+            if shouldBeRead, updatedEntries[index].isNew {
+                updatedEntries[index].isNew = false
+                didUpdate = true
+            }
+        }
+
+        if didUpdate {
+            entries = updatedEntries
         }
     }
 
@@ -1837,7 +1876,10 @@ extension FeedListView {
     }
 
     @MainActor
-    private func applyEntriesSnapshot(_ snapshot: [FeedEntry], insertedEntryIDs: Set<String> = [], persistCache: Bool) {
+    private func applyEntriesSnapshot(_ snapshot: [FeedEntry],
+                                      insertedEntryIDs: Set<String> = [],
+                                      persistCache: Bool,
+                                      uploadCacheToCloud: Bool = false) {
         let normalizedSnapshot = sortedAndLimitedEntries(snapshot)
         let visibleInsertedEntryIDs = insertedEntryIDs.intersection(Set(normalizedSnapshot.map(\.id)))
 
@@ -1854,13 +1896,13 @@ extension FeedListView {
         }
 
         if persistCache {
-            persistEntriesCache()
+            persistEntriesCache(uploadToCloud: uploadCacheToCloud)
         }
     }
 
     @MainActor
     func loadRSSFeed() async {
-        syncCloudStateFromICloud()
+        await syncCloudStateFromICloud()
 
         // Offline fast path: keep cached/local state visible and avoid network waits.
         guard !networkState.isOffline else {
@@ -1915,7 +1957,8 @@ extension FeedListView {
         applyEntriesSnapshot(
             mergeResult.entries,
             insertedEntryIDs: didInitialFeedLoad ? mergeResult.insertedEntryIDs : [],
-            persistCache: true
+            persistCache: true,
+            uploadCacheToCloud: true
         )
         scheduleOfflinePreload(for: mergeResult.entries)
 
@@ -1933,11 +1976,28 @@ extension FeedListView {
         await feedClient.fetch(feed: feed)
     }
     
-    private func persistEntriesCache() {
+    private func scheduleEntriesCachePersist() {
+        entriesCachePersistTask?.cancel()
+        entriesCachePersistTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: entriesCachePersistDelayNanoseconds)
+            guard !Task.isCancelled else { return }
+            persistEntriesCache()
+            entriesCachePersistTask = nil
+        }
+    }
+
+    private func persistEntriesCache(uploadToCloud: Bool = false) {
         guard let data = try? Self.cacheEncoder.encode(entries) else { return }
 
-        FeedCacheSync.write(data, for: FeedStorage.Keys.cachedEntries)
+        let token = FeedCacheSync.write(data, for: FeedStorage.Keys.cachedEntries)
         cachedEntriesData = data
+        if uploadToCloud {
+            FeedCloudKitSyncManager.shared.uploadLocalData(
+                data,
+                token: token,
+                for: FeedStorage.Keys.cachedEntries
+            )
+        }
     }
 
     private func scheduleOfflinePreload(for entries: [FeedEntry]) {
@@ -2155,7 +2215,6 @@ extension FeedListView {
         case .bookmarks:
             return bookmarkedLinks.contains(entry.link)
         case .unread:
-            // Keep recently-read items in unread flow until next refresh promotion.
             return !entry.isRead || recentlyReadLinks.contains(entry.link)
         case .today:
             let publishedDate = entry.parsedPubDate ?? .distantPast
@@ -2497,7 +2556,7 @@ extension FeedListView {
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
             entries[index].isRead = true
             entries[index].isNew = false
-            store.markRecentlyRead(articleID: entry.link)
+            store.unmarkRecentlyRead(articleID: entry.link)
             store.setRead(true, articleID: entry.link)
             pushSnapshotToWatch()
         }

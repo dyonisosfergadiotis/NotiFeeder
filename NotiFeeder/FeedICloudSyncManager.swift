@@ -20,18 +20,23 @@ final class FeedICloudSyncManager {
     private var appliedCloudPayloadsByKey: [String: Data] = [:]
     private var preferenceKeysApplyingCloudChange: Set<String> = []
     private var externalChangeObserver: NSObjectProtocol?
+    private var pendingCloudDataPushes: [String: PendingCloudDataPush] = [:]
+    private var cloudDataPushTasks: [String: Task<Void, Never>] = [:]
+    private var cloudSynchronizeTask: Task<Void, Never>?
+    private var localMutationDatesByKey: [String: Date] = [:]
 
     private let syncKeys: [String]
     private let notificationByKey: [String: Notification.Name]
     private let syncedPreferences: [SyncedPreference]
+    private let cloudPushDebounceNanoseconds: UInt64 = 250_000_000
+    private let cloudSynchronizeDebounceNanoseconds: UInt64 = 500_000_000
+    private let localMutationCloudApplyGraceInterval: TimeInterval = 4
 
     init(cloudStore: NSUbiquitousKeyValueStore = .default) {
         self.cloudStore = cloudStore
         self.syncKeys = [
             FeedStorage.Keys.savedFeeds,
-            FeedStorage.Keys.feedColorMap,
-            FeedStorage.Keys.readArticleIDs,
-            FeedStorage.Keys.bookmarkedArticleIDs
+            FeedStorage.Keys.feedColorMap
         ]
         self.notificationByKey = [
             FeedStorage.Keys.savedFeeds: .feedSavedFeedsDidSyncFromICloud,
@@ -77,6 +82,10 @@ final class FeedICloudSyncManager {
         if let externalChangeObserver {
             NotificationCenter.default.removeObserver(externalChangeObserver)
         }
+        for task in cloudDataPushTasks.values {
+            task.cancel()
+        }
+        cloudSynchronizeTask?.cancel()
     }
 
     func configureIfNeeded() {
@@ -131,18 +140,33 @@ final class FeedICloudSyncManager {
     }
 
     func pushLocalData(_ data: Data, for key: String) {
+        let token = FeedCacheSync.write(data, for: key)
+        pushLocalData(data, token: token, for: key)
+    }
+
+    func noteLocalMutation(for key: String) {
+        localMutationDatesByKey[key] = Date()
+    }
+
+    func pushLocalData(_ data: Data, token: Double, for key: String) {
         if appliedCloudPayloadsByKey[key] == data {
             appliedCloudPayloadsByKey.removeValue(forKey: key)
             return
         }
         guard !keysApplyingCloudChange.contains(key) else { return }
+        noteLocalMutation(for: key)
 
-        let token = FeedCacheSync.write(data, for: key)
         let cloudData = cloudStore.data(forKey: key)
         let cloudToken = cloudStore.double(forKey: FeedCacheSync.syncTokenKey(for: key))
+        var resolvedToken = token
 
-        guard cloudData != data || cloudToken < token else { return }
-        pushToCloud(data: data, token: token, for: key)
+        if cloudData != data, cloudToken >= resolvedToken {
+            resolvedToken = cloudToken.nextUp
+            _ = FeedCacheSync.write(data, for: key, token: resolvedToken)
+        }
+
+        guard cloudData != data || cloudToken < resolvedToken else { return }
+        scheduleCloudDataPush(data: data, token: resolvedToken, for: key)
     }
 
     private func syncAllFromCloudIfNeeded(preferCloudOnTie: Bool) {
@@ -159,6 +183,10 @@ final class FeedICloudSyncManager {
         let localToken = FeedCacheSync.bestAvailableToken(for: key)
         let cloudData = cloudStore.data(forKey: key)
         let cloudToken = cloudStore.double(forKey: FeedCacheSync.syncTokenKey(for: key))
+
+        if shouldDeferCloudApply(for: key, localData: localData, cloudData: cloudData) {
+            return
+        }
 
         switch (localData, cloudData) {
         case (nil, nil):
@@ -199,6 +227,7 @@ final class FeedICloudSyncManager {
         defer { keysApplyingCloudChange.remove(key) }
 
         let resolvedToken = token > 0 ? token : Date().timeIntervalSince1970
+        localMutationDatesByKey.removeValue(forKey: key)
         appliedCloudPayloadsByKey[key] = data
         _ = FeedCacheSync.write(data, for: key, token: resolvedToken)
         if let notification = notificationByKey[key] {
@@ -206,10 +235,51 @@ final class FeedICloudSyncManager {
         }
     }
 
+    private func shouldDeferCloudApply(for key: String, localData: Data?, cloudData: Data?) -> Bool {
+        guard localData != cloudData else { return false }
+        guard let localMutationDate = localMutationDatesByKey[key] else { return false }
+        return Date().timeIntervalSince(localMutationDate) < localMutationCloudApplyGraceInterval
+    }
+
     private func pushToCloud(data: Data, token: Double, for key: String) {
         cloudStore.set(data, forKey: key)
         cloudStore.set(token, forKey: FeedCacheSync.syncTokenKey(for: key))
-        cloudStore.synchronize()
+        scheduleCloudSynchronize()
+    }
+
+    private func scheduleCloudDataPush(data: Data, token: Double, for key: String) {
+        pendingCloudDataPushes[key] = PendingCloudDataPush(data: data, token: token)
+        cloudDataPushTasks[key]?.cancel()
+        cloudDataPushTasks[key] = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: self?.cloudPushDebounceNanoseconds ?? 250_000_000)
+            guard !Task.isCancelled, let self else { return }
+            guard let pending = self.pendingCloudDataPushes.removeValue(forKey: key) else { return }
+            self.cloudDataPushTasks[key] = nil
+            let cloudData = self.cloudStore.data(forKey: key)
+            let cloudToken = self.cloudStore.double(forKey: FeedCacheSync.syncTokenKey(for: key))
+            var resolvedToken = pending.token
+
+            if cloudData != pending.data, cloudToken >= resolvedToken {
+                guard self.shouldDeferCloudApply(for: key, localData: pending.data, cloudData: cloudData) else {
+                    return
+                }
+                resolvedToken = cloudToken.nextUp
+                _ = FeedCacheSync.write(pending.data, for: key, token: resolvedToken)
+            }
+
+            guard cloudData != pending.data || cloudToken < resolvedToken else { return }
+            self.pushToCloud(data: pending.data, token: resolvedToken, for: key)
+        }
+    }
+
+    private func scheduleCloudSynchronize() {
+        cloudSynchronizeTask?.cancel()
+        cloudSynchronizeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: self?.cloudSynchronizeDebounceNanoseconds ?? 500_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.cloudSynchronizeTask = nil
+            self.cloudStore.synchronize()
+        }
     }
 
     private func pushLocalPreferenceValue(_ value: SyncedPreferenceValue, for key: String) {
@@ -295,7 +365,7 @@ final class FeedICloudSyncManager {
             cloudStore.set(value, forKey: preference.key)
         }
         cloudStore.set(token, forKey: FeedCacheSync.syncTokenKey(for: preference.key))
-        cloudStore.synchronize()
+        scheduleCloudSynchronize()
     }
 
     private func syncedPreference(for key: String) -> SyncedPreference? {
@@ -401,5 +471,10 @@ private extension FeedICloudSyncManager {
         case int(Int)
         case double(Double)
         case string(String)
+    }
+
+    struct PendingCloudDataPush {
+        let data: Data
+        let token: Double
     }
 }

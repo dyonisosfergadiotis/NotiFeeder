@@ -47,6 +47,15 @@ struct FeedDetailView: View {
     private static let imageTagRegex: NSRegularExpression? = {
         try? NSRegularExpression(pattern: "<img\\b", options: [.caseInsensitive])
     }()
+    private static let readerImageTagRegex: NSRegularExpression? = {
+        try? NSRegularExpression(pattern: #"<img\b[^>]*>"#, options: [.caseInsensitive])
+    }()
+    private static let readerIframeTagRegex: NSRegularExpression? = {
+        try? NSRegularExpression(pattern: #"<iframe\b[\s\S]*?</iframe\s*>|<iframe\b[^>]*?/?>"#, options: [.caseInsensitive])
+    }()
+    private static let readerVideoTagRegex: NSRegularExpression? = {
+        try? NSRegularExpression(pattern: #"<video\b[\s\S]*?</video\s*>|<video\b[^>]*?/?>"#, options: [.caseInsensitive])
+    }()
     private static let readingTimeCache: NSCache<NSString, NSString> = {
         let cache = NSCache<NSString, NSString>()
         cache.countLimit = 512
@@ -485,6 +494,8 @@ struct FeedDetailView: View {
         }
         .onChange(of: entry.link) { _, _ in
             guard hasAppeared else { return }
+            isReadLocal = store.isRead(articleID: entry.link)
+            isBookmarked = isCurrentlyBookmarked()
             collapseProgress = 0
             readingProgress = 0
             isLeftBarExpanded = true
@@ -791,6 +802,241 @@ struct FeedDetailView: View {
 
         return total > 0 ? total : nil
     }
+
+    private func sanitizedReaderBody(from html: String) -> String {
+        var sanitized = removeReaderBlockedElements(in: html)
+        sanitized = removeTrackingImages(in: sanitized)
+        sanitized = removeUnsupportedIframes(in: sanitized)
+        sanitized = removeEmptyVideos(in: sanitized)
+        sanitized = fixHTML5VideoTags(in: fixYouTubeIframes(in: sanitized))
+        return sanitized
+    }
+
+    private func removeReaderBlockedElements(in html: String) -> String {
+        let blockedPatterns = [
+            #"<script\b[\s\S]*?</script\s*>"#,
+            #"<style\b[\s\S]*?</style\s*>"#,
+            #"<noscript\b[\s\S]*?</noscript\s*>"#,
+            #"<amp-iframe\b[\s\S]*?</amp-iframe\s*>"#
+        ]
+
+        var result = html
+        for pattern in blockedPatterns {
+            result = result.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        }
+        return result
+    }
+
+    private func removeTrackingImages(in html: String) -> String {
+        replaceMatches(in: html, regex: Self.readerImageTagRegex) { tag in
+            shouldRemoveImageTag(tag) ? "" : tag
+        }
+    }
+
+    private func removeUnsupportedIframes(in html: String) -> String {
+        replaceMatches(in: html, regex: Self.readerIframeTagRegex) { tag in
+            guard let source = htmlAttribute("src", in: tag), !source.isEmpty else {
+                return ""
+            }
+            if isTrackingOrAdURL(source) {
+                return ""
+            }
+            return isSupportedReaderEmbedSource(source) ? tag : ""
+        }
+    }
+
+    private func removeEmptyVideos(in html: String) -> String {
+        replaceMatches(in: html, regex: Self.readerVideoTagRegex) { tag in
+            if let source = htmlAttribute("src", in: tag), isTrackingOrAdURL(source) {
+                return ""
+            }
+            let hasDirectSource = htmlAttribute("src", in: tag)?.isEmpty == false
+            let hasNestedSource = tag.range(of: #"<source\b[^>]+\bsrc\s*="#, options: [.regularExpression, .caseInsensitive]) != nil
+            return (hasDirectSource || hasNestedSource) ? tag : ""
+        }
+    }
+
+    private func replaceMatches(in html: String,
+                                regex: NSRegularExpression?,
+                                transform: (String) -> String) -> String {
+        guard let regex else { return html }
+
+        let range = NSRange(html.startIndex..<html.endIndex, in: html)
+        let matches = regex.matches(in: html, options: [], range: range)
+        guard !matches.isEmpty else { return html }
+
+        var result = html
+        for match in matches.reversed() {
+            guard let matchRange = Range(match.range(at: 0), in: result) else {
+                continue
+            }
+
+            let original = String(result[matchRange])
+            result.replaceSubrange(matchRange, with: transform(original))
+        }
+
+        return result
+    }
+
+    private func shouldRemoveImageTag(_ tag: String) -> Bool {
+        guard let source = htmlAttribute("src", in: tag), !source.isEmpty else {
+            return true
+        }
+        if source.lowercased().hasPrefix("data:image/svg+xml") {
+            return true
+        }
+        if isTrackingOrAdURL(source) {
+            return true
+        }
+
+        let style = htmlAttribute("style", in: tag)?.lowercased() ?? ""
+        if style.contains("display:none")
+            || style.contains("display: none")
+            || style.contains("visibility:hidden")
+            || style.contains("visibility: hidden")
+            || style.contains("opacity:0")
+            || style.contains("opacity: 0") {
+            return true
+        }
+
+        let width = htmlNumericAttribute("width", in: tag)
+        let height = htmlNumericAttribute("height", in: tag)
+        if let width, let height, width <= 2, height <= 2 {
+            return true
+        }
+
+        if (style.contains("width:1px") || style.contains("width: 1px"))
+            && (style.contains("height:1px") || style.contains("height: 1px")) {
+            return true
+        }
+
+        return false
+    }
+
+    private func htmlAttribute(_ name: String, in tag: String) -> String? {
+        let escapedName = NSRegularExpression.escapedPattern(for: name)
+        let pattern = #"(?i)\b\#(escapedName)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return nil
+        }
+
+        let range = NSRange(tag.startIndex..<tag.endIndex, in: tag)
+        guard let match = regex.firstMatch(in: tag, options: [], range: range) else {
+            return nil
+        }
+
+        for index in 1..<match.numberOfRanges {
+            let valueRange = match.range(at: index)
+            guard valueRange.location != NSNotFound,
+                  let range = Range(valueRange, in: tag) else {
+                continue
+            }
+            return String(tag[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return nil
+    }
+
+    private func htmlNumericAttribute(_ name: String, in tag: String) -> Double? {
+        guard let rawValue = htmlAttribute(name, in: tag) else { return nil }
+        let normalized = rawValue
+            .replacingOccurrences(of: "px", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return Double(normalized)
+    }
+
+    private func isSupportedReaderEmbedSource(_ rawSource: String) -> Bool {
+        guard let host = hostName(from: rawSource) else {
+            return false
+        }
+
+        return host == "youtu.be"
+            || host == "youtube.com"
+            || host.hasSuffix(".youtube.com")
+            || host == "youtube-nocookie.com"
+            || host.hasSuffix(".youtube-nocookie.com")
+            || host == "vimeo.com"
+            || host.hasSuffix(".vimeo.com")
+            || host == "open.spotify.com"
+            || host == "spotify.com"
+            || host.hasSuffix(".spotify.com")
+            || host == "w.soundcloud.com"
+            || host == "soundcloud.com"
+            || host.hasSuffix(".soundcloud.com")
+            || host == "music.apple.com"
+            || host == "podcasts.apple.com"
+            || host.hasSuffix(".music.apple.com")
+            || host.hasSuffix(".podcasts.apple.com")
+            || host == "bandcamp.com"
+            || host.hasSuffix(".bandcamp.com")
+            || host == "archive.org"
+            || host.hasSuffix(".archive.org")
+    }
+
+    private func isTrackingOrAdURL(_ rawSource: String) -> Bool {
+        let source = rawSource.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !source.isEmpty else { return true }
+        guard !source.hasPrefix("about:")
+                && !source.hasPrefix("javascript:")
+                && !source.hasPrefix("blob:") else {
+            return true
+        }
+
+        let blockedTokens = [
+            "doubleclick",
+            "googlesyndication",
+            "googleadservices",
+            "google-analytics",
+            "googletagmanager",
+            "adservice",
+            "adnxs",
+            "outbrain",
+            "taboola",
+            "scorecardresearch",
+            "quantserve",
+            "chartbeat",
+            "analytics",
+            "tracking",
+            "tracker",
+            "pixel",
+            "1x1"
+        ]
+
+        return blockedTokens.contains { source.contains($0) }
+    }
+
+    private func hostName(from rawSource: String) -> String? {
+        let trimmed = rawSource.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let normalized: String
+        if trimmed.hasPrefix("//") {
+            normalized = "https:\(trimmed)"
+        } else if trimmed.range(of: #"^[a-z][a-z0-9+\-.]*://"#, options: [.regularExpression, .caseInsensitive]) == nil {
+            normalized = "https://\(trimmed)"
+        } else {
+            normalized = trimmed
+        }
+
+        guard let host = URLComponents(string: normalized)?.host?.lowercased() else {
+            return nil
+        }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    private func mixedRGBColor(base: (Int, Int, Int),
+                               overlay: (red: Int, green: Int, blue: Int),
+                               overlayOpacity: Double) -> String {
+        let clampedOpacity = max(0, min(1, overlayOpacity))
+        let red = Int((Double(base.0) * (1 - clampedOpacity)) + (Double(overlay.red) * clampedOpacity))
+        let green = Int((Double(base.1) * (1 - clampedOpacity)) + (Double(overlay.green) * clampedOpacity))
+        let blue = Int((Double(base.2) * (1 - clampedOpacity)) + (Double(overlay.blue) * clampedOpacity))
+        return "rgb(\(red),\(green),\(blue))"
+    }
     
     private func formattedHTML(accentHex: String) -> String {
         let fontSize = 18 * readerFontScale
@@ -798,13 +1044,15 @@ struct FeedDetailView: View {
         let fontFamilyCSS = (ReaderFontFamily(rawValue: readerFontFamily) ?? .rounded).cssValue
         let textAlignCSS = readerTextAlignmentRaw == "justified" ? "justify" : readerTextAlignmentRaw
         let rgb = resolvedFeedColor.rgbComponents ?? (0,0,0)
-        let background: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.1)"
+        let backgroundBase = colorScheme == .dark ? (0, 0, 0) : (255, 255, 255)
+        let background: String = mixedRGBColor(base: backgroundBase, overlay: rgb, overlayOpacity: 0.1)
         let mediaGlow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.16)"
         let mediaShadow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.14)"
         let codeBackground: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.16)"
         let inlineCodeBackground: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.22)"
         let rawBodySource = (entry.contentRaw?.isEmpty == false) ? entry.contentRaw! : entry.content
         let rawBody = HTMLText.normalizeHTMLContent(rawBodySource)
+        let bodyHTML = sanitizedReaderBody(from: rawBody)
 
         return """
         <html>
@@ -812,10 +1060,10 @@ struct FeedDetailView: View {
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
-              html { overflow-x: hidden; }
+              html { overflow-x: hidden; min-height: 100%; background: \(background); }
               :root { --reader-media-width: 90%; }
               * { box-sizing: border-box; }
-              body { font-family: \(fontFamilyCSS); font-size: \(fontSize)px; padding: 16px; line-height: \(lineHeight); margin: 0; text-align: \(textAlignCSS); background-color: \(background); overflow-wrap: break-word; word-break: normal; }
+              body { font-family: \(fontFamilyCSS); font-size: \(fontSize)px; min-height: 100%; padding: 16px; line-height: \(lineHeight); margin: 0; text-align: \(textAlignCSS); background: \(background); overflow-wrap: break-word; word-break: normal; }
               p, li, blockquote { overflow-wrap: anywhere; }
               p { margin: 0 0 0.78em; }
               p:last-child { margin-bottom: 0; }
@@ -833,11 +1081,12 @@ struct FeedDetailView: View {
               li > p:first-child { margin-top: 0; }
               li > p:last-child { margin-bottom: 0; }
               li > ul, li > ol { margin: 0.32em 0 0.46em; }
-              @media (prefers-color-scheme: dark) { body { color: #EAEAEA; } a { color: \(accentHex); } html { background-color: #000000; } }
-              @media (prefers-color-scheme: light) { body { color: #111111; } a { color: \(accentHex); } html { background-color: #ffffff; } }
-              img, video, iframe { display: block !important; max-width: var(--reader-media-width) !important; border-radius: 10px; margin: 16px auto !important; float: none !important; clear: both; box-shadow: 0 10px 24px \(mediaShadow), 0 0 0 1px rgba(255,255,255,0.08), 0 0 12px \(mediaGlow), 0 0 20px \(mediaGlow); }
+              @media (prefers-color-scheme: dark) { body { color: #EAEAEA; } a { color: \(accentHex); } }
+              @media (prefers-color-scheme: light) { body { color: #111111; } a { color: \(accentHex); } }
+              img, video, iframe { display: block !important; max-width: var(--reader-media-width) !important; border-radius: 10px; margin: 16px auto !important; float: none !important; clear: both; background: transparent !important; box-shadow: 0 10px 24px \(mediaShadow), 0 0 0 1px rgba(255,255,255,0.08), 0 0 12px \(mediaGlow), 0 0 20px \(mediaGlow); }
               img, video { width: auto !important; height: auto !important; }
               iframe { width: var(--reader-media-width) !important; height: auto !important; aspect-ratio: 16/9; }
+              iframe:not([src]), iframe[src=""], img:not([src]), img[src=""] { display: none !important; }
               pre, code, kbd, samp { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; text-align: left; }
               code, kbd, samp {
                 background: \(inlineCodeBackground);
@@ -880,6 +1129,50 @@ struct FeedDetailView: View {
                   } catch (_) {}
                 });
 
+                function isNoisyURL(raw) {
+                  var src = (raw || '').toLowerCase();
+                  return !src
+                    || src.indexOf('about:') === 0
+                    || src.indexOf('javascript:') === 0
+                    || src.indexOf('doubleclick') !== -1
+                    || src.indexOf('googlesyndication') !== -1
+                    || src.indexOf('googleadservices') !== -1
+                    || src.indexOf('googletagmanager') !== -1
+                    || src.indexOf('outbrain') !== -1
+                    || src.indexOf('taboola') !== -1
+                    || src.indexOf('scorecardresearch') !== -1
+                    || src.indexOf('quantserve') !== -1
+                    || src.indexOf('tracking') !== -1
+                    || src.indexOf('tracker') !== -1
+                    || src.indexOf('pixel') !== -1
+                    || src.indexOf('1x1') !== -1;
+                }
+
+                function removeEmptyBlocks() {
+                  document.querySelectorAll('p, div, section, aside, figure').forEach(function (element) {
+                    var text = (element.textContent || '').replace(/\\s+/g, '');
+                    if (text.length > 0) { return; }
+                    if (element.querySelector('img, video, iframe, audio, source, picture, canvas, svg')) { return; }
+                    element.remove();
+                  });
+                }
+
+                document.querySelectorAll('img').forEach(function (image) {
+                  var width = parseFloat(image.getAttribute('width') || '0');
+                  var height = parseFloat(image.getAttribute('height') || '0');
+                  if (isNoisyURL(image.getAttribute('src')) || (width > 0 && width <= 2 && height > 0 && height <= 2)) {
+                    image.remove();
+                  }
+                });
+
+                document.querySelectorAll('iframe').forEach(function (frame) {
+                  if (isNoisyURL(frame.getAttribute('src'))) {
+                    frame.remove();
+                  }
+                });
+
+                removeEmptyBlocks();
+
                 document.querySelectorAll('iframe[src]').forEach(function (frame) {
                   try {
                     var rawSrc = frame.getAttribute('src');
@@ -894,7 +1187,7 @@ struct FeedDetailView: View {
               });
             </script>
           </head>
-          <body>\(fixHTML5VideoTags(in: fixYouTubeIframes(in: rawBody)))</body>
+          <body>\(bodyHTML)</body>
         </html>
         """
     }

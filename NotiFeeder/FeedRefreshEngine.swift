@@ -283,7 +283,8 @@ final class FeedRefreshEngine {
         let key = FeedStorage.Keys.cachedEntries
         let current = FeedCacheSync.bestAvailableData(for: key)
         guard current != data else { return false }
-        FeedCacheSync.write(data, for: key)
+        let token = FeedCacheSync.write(data, for: key)
+        FeedCloudKitSyncManager.shared.uploadLocalData(data, token: token, for: key)
         return true
     }
 }

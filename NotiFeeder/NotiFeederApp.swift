@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
         Task { @MainActor in
             FeedICloudSyncManager.shared.configureIfNeeded()
+            FeedCloudKitSyncManager.shared.configureIfNeeded()
         }
         return true
     }
@@ -36,6 +37,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func applicationWillEnterForeground(_ application: UIApplication) {
         Task { @MainActor in
             FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
+            await FeedCloudKitSyncManager.shared.syncAllFromCloudIfPossible()
         }
     }
 
@@ -44,6 +46,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
         Task { @MainActor in
             FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
+            await FeedCloudKitSyncManager.shared.syncAllFromCloudIfPossible()
         }
     }
 

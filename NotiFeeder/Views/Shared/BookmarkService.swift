@@ -93,8 +93,8 @@ enum BookmarkService {
     }
 
     @MainActor
-    static func syncBookmarksFromCloudIfNeeded(context: ModelContext) {
-        FeedICloudSyncManager.shared.syncDataFromCloudIfNeeded(for: bookmarksKey)
+    static func syncBookmarksFromCloudIfNeeded(context: ModelContext) async {
+        await FeedCloudKitSyncManager.shared.syncDataFromCloudIfNeeded(for: bookmarksKey)
         guard FeedCacheSync.bestAvailableData(for: bookmarksKey) != nil else {
             let localLinks = bookmarkedLinksFromModels(context: context)
             if !localLinks.isEmpty {
@@ -143,9 +143,9 @@ enum BookmarkService {
     private static func persistBookmarkedLinks(_ links: Set<String>) {
         let sortedLinks = links.sorted()
         guard let data = try? encoder.encode(sortedLinks) else { return }
-        _ = FeedCacheSync.write(data, for: bookmarksKey)
+        let token = FeedCacheSync.write(data, for: bookmarksKey)
         Task { @MainActor in
-            FeedICloudSyncManager.shared.pushLocalData(data, for: bookmarksKey)
+            FeedCloudKitSyncManager.shared.uploadLocalData(data, token: token, for: bookmarksKey)
         }
     }
 }

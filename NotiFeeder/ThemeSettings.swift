@@ -109,9 +109,9 @@ final class ThemeSettings: ObservableObject {
 
     private func saveFeedColors() {
         if let data = try? encoder.encode(feedColorMap) {
-            _ = FeedCacheSync.write(data, for: Keys.feedColorMap)
+            let token = FeedCacheSync.write(data, for: Keys.feedColorMap)
             Task { @MainActor in
-                FeedICloudSyncManager.shared.pushLocalData(data, for: Keys.feedColorMap)
+                FeedICloudSyncManager.shared.pushLocalData(data, token: token, for: Keys.feedColorMap)
             }
         }
     }

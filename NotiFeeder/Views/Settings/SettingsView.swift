@@ -39,6 +39,7 @@ enum UserProfileStore {
 struct SettingsView: View {
     @Binding var feeds: [FeedSource]
     @Binding var savedFeedsData: Data
+    var onFeedsDidChange: () -> Void = {}
     @EnvironmentObject private var theme: ThemeSettings
     @AppStorage(UserProfileStore.displayNameKey) private var profileDisplayName: String = ""
     @AppStorage(UserProfileStore.avatarImageDataKey) private var profileAvatarData: Data = Data()
@@ -52,10 +53,15 @@ struct SettingsView: View {
                 Section("Inhalte") {
                     SettingsNavigationRow(
                         icon: "dot.radiowaves.left.and.right",
-                        iconTint: theme.uiAccentColor,
-                        title: "Feeds verwalten"
+                        iconTint: Color.blue,
+                        title: "Feeds",
+                        subtitle: "\(feeds.count) gespeicherte Feeds"
                     ) {
-                        FeedsSettingsViewPlaceholder()
+                        FeedsSettingsView(
+                            feeds: $feeds,
+                            savedFeedsData: $savedFeedsData,
+                            onFeedsDidChange: onFeedsDidChange
+                        )
                             .environmentObject(theme)
                     }
                 }
@@ -63,16 +69,18 @@ struct SettingsView: View {
                 Section("Darstellung") {
                     SettingsNavigationRow(
                         icon: "paintpalette",
-                        iconTint: theme.uiAccentColor,
-                        title: "Karten & Layout"
+                        iconTint: Color.orange,
+                        title: "Karten & Layout",
+                        subtitle: fullColorCards ? "Vollflächige Kacheln aktiv" : "Standard-Karten aktiv"
                     ) {
                         PersonalizationViewPlaceholder()
                     }
 
                     SettingsNavigationRow(
                         icon: "square.grid.2x2",
-                        iconTint: theme.uiAccentColor,
-                        title: "Widgets"
+                        iconTint: Color.green,
+                        title: "Widgets",
+                        subtitle: "Darstellung und Inhalte"
                     ) {
                         WidgetSettingsView()
                             .environmentObject(theme)
@@ -82,17 +90,18 @@ struct SettingsView: View {
                 Section("App") {
                     SettingsNavigationRow(
                         icon: "info.circle",
-                        iconTint: theme.uiAccentColor,
-                        title: "App & Info"
+                        iconTint: Color.gray,
+                        title: "App & Info",
+                        subtitle: "Autor und Links"
                     ) {
                         InfoViewPlaceholder()
                     }
                 }
             }
             .sheetCornerAlignedScrollContent()
+            .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
-            .listStyle(.insetGrouped)
             .navigationTitle("Einstellungen")
             .navigationBarTitleDisplayMode(.large)
         }
@@ -119,19 +128,19 @@ struct SettingsView: View {
                 ProfileNameEditorView()
             } label: {
                 HStack(spacing: 14) {
-                    ProfileAvatarBadge(name: displayName, imageData: profileAvatarData, size: 44)
+                    ProfileAvatarBadge(name: displayName, imageData: profileAvatarData, size: 56)
                     VStack(alignment: .leading, spacing: 3) {
                         Text(displayName)
-                            .appTitle()
+                            .font(.title3)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                         Text("Profilbild & Name")
-                            .appMeta()
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 6)
                 .contentShape(Rectangle())
             }
         }
@@ -198,6 +207,7 @@ struct FirstLaunchProfileSetupView: View {
 
     private func save() {
         guard !sanitizedDraft.isEmpty else { return }
+        AppHaptics.success()
         onSave(sanitizedDraft)
     }
 }
@@ -206,17 +216,20 @@ private struct SettingsNavigationRow<Destination: View>: View {
     let icon: String
     let iconTint: Color
     let title: String
+    let subtitle: String?
     private let destination: Destination
 
     init(
         icon: String,
         iconTint: Color,
         title: String,
+        subtitle: String? = nil,
         @ViewBuilder destination: () -> Destination
     ) {
         self.icon = icon
         self.iconTint = iconTint
         self.title = title
+        self.subtitle = subtitle
         self.destination = destination()
     }
 
@@ -227,10 +240,19 @@ private struct SettingsNavigationRow<Destination: View>: View {
             HStack(spacing: 12) {
                 SettingsListIconBadge(systemName: icon, tint: iconTint)
 
-                Text(title)
-                    .appTitle()
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
 
                 Spacer(minLength: 0)
             }
@@ -254,6 +276,7 @@ struct ProfileNameEditorView: View {
             Section("Profilbild") {
                 HStack(spacing: 14) {
                     Button {
+                        AppHaptics.selection()
                         showAvatarSourceDialog = true
                     } label: {
                         ProfileAvatarBadge(name: effectiveDraftName, imageData: profileAvatarData, size: 64)
@@ -263,10 +286,10 @@ struct ProfileNameEditorView: View {
 
                     VStack(alignment: .leading, spacing: 4) {
                         Text(effectiveDraftName)
-                            .appTitle()
+                            .font(.body)
                             .foregroundStyle(.primary)
                         Text("Tippe auf die Initialen, um ein Foto aufzunehmen oder ein Bild auszuwählen.")
-                            .appMeta()
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -282,13 +305,13 @@ struct ProfileNameEditorView: View {
                 Text("Name")
             } footer: {
                 Text("Der Name erscheint oben in den Einstellungen.")
-                    .appMeta()
+                    .font(.footnote)
             }
         }
         .sheetCornerAlignedScrollContent()
+        .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
-        .listStyle(.insetGrouped)
         .navigationTitle("Profil")
         .navigationBarTitleDisplayMode(.inline)
         .tint(theme.uiAccentColor)
@@ -301,16 +324,19 @@ struct ProfileNameEditorView: View {
         .confirmationDialog("Profilbild", isPresented: $showAvatarSourceDialog) {
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
                 Button("Foto aufnehmen") {
+                    AppHaptics.selection()
                     imagePickerSource = .camera
                 }
             }
 
             Button("Bild auswählen") {
+                AppHaptics.selection()
                 imagePickerSource = .photoLibrary
             }
 
             if !profileAvatarData.isEmpty {
                 Button("Profilbild entfernen", role: .destructive) {
+                    AppHaptics.warning()
                     profileAvatarData = Data()
                 }
             }
@@ -341,6 +367,7 @@ struct ProfileNameEditorView: View {
 
     private func save() {
         guard !sanitizedDraft.isEmpty else { return }
+        AppHaptics.success()
         profileDisplayName = sanitizedDraft
         dismiss()
     }
@@ -412,25 +439,20 @@ private struct ProfileImagePicker: UIViewControllerRepresentable {
 struct SettingsScaffold<Content: View>: View {
     @EnvironmentObject private var theme: ThemeSettings
 
-    private let spacing: CGFloat
     private let content: Content
 
     init(spacing: CGFloat = 24, @ViewBuilder content: () -> Content) {
-        self.spacing = spacing
         self.content = content()
     }
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(alignment: .leading, spacing: spacing) {
-                content
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+        List {
+            content
         }
         .sheetCornerAlignedScrollContent()
-        .scrollContentBackground(.hidden)
+        .listStyle(.insetGrouped)
         .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
+        .scrollContentBackground(.hidden)
     }
 }
 
@@ -446,20 +468,18 @@ struct SettingsSectionCard<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if let title, !title.isEmpty {
-                Text(title)
-                    .appSectionLabel()
-                    .foregroundStyle(sectionHeadingColor)
-                    .padding(.leading, 6)
-            }
-
-            SettingsCardSurface {
+        Section {
+            if spacing == 0 {
+                content
+            } else {
                 VStack(alignment: .leading, spacing: spacing) {
                     content
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
+            }
+        } header: {
+            if let title, !title.isEmpty {
+                Text(title)
             }
         }
     }
@@ -472,9 +492,6 @@ struct SettingsSectionCard<Content: View>: View {
 }
 
 struct SettingsCardSurface<Content: View>: View {
-    @EnvironmentObject private var theme: ThemeSettings
-    @Environment(\.colorScheme) private var colorScheme
-
     private let content: Content
 
     init(@ViewBuilder content: () -> Content) {
@@ -483,35 +500,18 @@ struct SettingsCardSurface<Content: View>: View {
 
     var body: some View {
         content
+            .padding(14)
             .background { cardBackground }
-            .overlay { cardBorder }
             .clipShape(cardShape)
     }
 
     private var cardShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-    }
-
-    private var cardBorder: some View {
-        cardShape
-            .stroke(Color(uiColor: .separator).opacity(colorScheme == .dark ? 0.30 : 0.32), lineWidth: 0.8)
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
     }
 
     private var cardBackground: some View {
         cardShape
-            .fill(colorScheme == .dark ? Color(uiColor: .secondarySystemGroupedBackground) : Color(uiColor: .systemBackground))
-            .overlay {
-                cardShape.fill(
-                    LinearGradient(
-                        colors: [
-                            theme.uiAccentColor.opacity(colorScheme == .dark ? 0.08 : 0.04),
-                            .clear
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-            }
+            .fill(Color(uiColor: .secondarySystemGroupedBackground))
     }
 }
 
@@ -538,12 +538,11 @@ struct SettingsListIconBadge: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(tint.gradient)
+                .fill(tint)
                 .frame(width: 29, height: 29)
 
             Image(systemName: systemName)
-                .font(.system(size: 14))
-                .fontWeight(.semibold)
+                .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.white)
         }
         .accessibilityHidden(true)
@@ -570,23 +569,9 @@ struct SettingsIconTile: View {
 
 struct SettingsChromeBackground: View {
     let accent: Color
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        ZStack {
-            Color(uiColor: colorScheme == .dark ? .black : .systemGroupedBackground)
-
-            LinearGradient(
-                colors: UIStylePolicy.accentBackgroundColors(accent: accent, colorScheme: colorScheme),
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .opacity(colorScheme == .dark ? 0.18 : 0.10)
-
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(colorScheme == .dark ? 0.06 : 0.08)
-        }
+        Color(uiColor: .systemGroupedBackground)
     }
 }
 

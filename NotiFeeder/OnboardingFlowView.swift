@@ -5,23 +5,30 @@
 //  Created by Dyonisos Fergadiotis on 15.12.25.
 //
 
-
 import SwiftUI
 
 struct OnboardingFlowView: View {
     @EnvironmentObject private var theme: ThemeSettings
     @ObservedObject var viewModel: OnboardingViewModel
-    var onFinish: (FeedSource?) -> Void
+    var onFinish: (FeedSource?, String?) -> Void
+
+    @State private var didFinish = false
+
+    private let visibleSteps: [OnboardingViewModel.Step] = [.intro, .enterURL, .enterDetails, .features]
+
+    private var canGoBack: Bool {
+        viewModel.step.rawValue > OnboardingViewModel.Step.intro.rawValue
+            && viewModel.step != .done
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            topBar
+
             ZStack {
                 switch viewModel.step {
                 case .intro:
-                    OnboardingIntroView(
-                        startAction: { viewModel.next() },
-                        skipAction: { onFinish(nil) }
-                    )
+                    OnboardingIntroView()
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                 case .enterURL:
                     OnboardingEnterURLView(viewModel: viewModel)
@@ -33,58 +40,147 @@ struct OnboardingFlowView: View {
                     OnboardingFeaturesView()
                         .transition(.opacity.combined(with: .move(edge: .trailing)))
                 case .done:
-                    Color.clear.onAppear { onFinish(viewModel.producedFeed) }
+                    Color.clear.onAppear { finish(with: viewModel.producedFeed) }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.easeInOut(duration: 0.22), value: viewModel.step)
-
-            if viewModel.step != .intro && viewModel.step != .done {
-                HStack {
-                    Button("Überspringen") { onFinish(nil) }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Zurück") { viewModel.back() }
-                        .buttonStyle(.bordered)
-                    nextButton
-                }
-                .padding()
-                .background(.ultraThinMaterial)
+        }
+        .background(Color(.systemBackground))
+        .safeAreaInset(edge: .bottom) {
+            if viewModel.step != .done {
+                arrowFooter
             }
         }
     }
 
-    @ViewBuilder
-    private var nextButton: some View {
-        switch viewModel.step {
-        case .intro:
-            EmptyView()
-        case .enterURL:
-            Button("Weiter") {
-                viewModel.next()
+    private var topBar: some View {
+        HStack {
+            Button {
+                AppHaptics.selection()
+                withAnimation(.easeInOut(duration: 0.22)) {
+                    viewModel.back()
+                }
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.headline)
+                    .fontWeight(.light)
+                    .frame(width: 36, height: 36)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(theme.uiAccentColor)
-            .disabled(!viewModel.canProceedFromURL())
-        case .enterDetails:
-            Button("Weiter") { viewModel.next() }
-                .buttonStyle(.borderedProminent)
-                .tint(theme.uiAccentColor)
-                .disabled(!viewModel.canProceedFromDetails())
-        case .features:
-            Button("Fertig") { viewModel.next() }
-                .buttonStyle(.borderedProminent)
-                .tint(theme.uiAccentColor)
-        case .done:
-            EmptyView()
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .opacity(canGoBack ? 1 : 0)
+            .disabled(!canGoBack)
+            .accessibilityHidden(!canGoBack)
+
+            Spacer()
+
+            Button("Überspringen") {
+                finish(with: nil)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 4)
+    }
+
+    private var arrowFooter: some View {
+        VStack(spacing: 14) {
+            if let validationMessage = viewModel.urlValidationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.circle.fill")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 20)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
+            HStack(spacing: 18) {
+                Button {
+                    AppHaptics.selection()
+                    withAnimation(.easeInOut(duration: 0.22)) {
+                        viewModel.back()
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .frame(width: 48, height: 48)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(canGoBack ? theme.uiAccentColor : Color.secondary.opacity(0.45))
+                .background(Circle().fill(Color(.secondarySystemGroupedBackground)))
+                .overlay(Circle().stroke(Color(.separator).opacity(0.35), lineWidth: 0.8))
+                .disabled(!canGoBack)
+                .accessibilityLabel("Zurück")
+
+                Spacer(minLength: 8)
+
+                progressDots
+
+                Spacer(minLength: 8)
+
+                Button {
+                    goForward()
+                } label: {
+                    Image(systemName: viewModel.step == .features ? "checkmark" : "chevron.right")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .frame(width: 54, height: 54)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .background(Circle().fill(theme.uiAccentColor))
+                .shadow(color: theme.uiAccentColor.opacity(0.22), radius: 10, y: 4)
+                .accessibilityLabel(viewModel.step == .features ? "Onboarding abschließen" : "Weiter")
+            }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+        }
+        .padding(.top, 12)
+        .background(.ultraThinMaterial)
+    }
+
+    private var progressDots: some View {
+        HStack(spacing: 7) {
+            ForEach(visibleSteps, id: \.self) { step in
+                Capsule(style: .continuous)
+                    .fill(step == viewModel.step ? theme.uiAccentColor : Color(.tertiarySystemFill))
+                    .frame(width: step == viewModel.step ? 18 : 7, height: 7)
+                    .animation(.easeInOut(duration: 0.18), value: viewModel.step)
+            }
+        }
+    }
+
+    private func finish(with feed: FeedSource?) {
+        guard !didFinish else { return }
+        didFinish = true
+        if feed == nil {
+            AppHaptics.selection()
+        } else {
+            AppHaptics.success()
+        }
+        onFinish(feed, feed == nil ? nil : viewModel.selectedColorHex)
+    }
+
+    private func goForward() {
+        let previousStep = viewModel.step
+        withAnimation(.easeInOut(duration: 0.22)) {
+            viewModel.next()
+        }
+
+        if viewModel.step == .done {
+            finish(with: viewModel.producedFeed)
+        } else if viewModel.step == previousStep {
+            AppHaptics.warning()
+        } else {
+            AppHaptics.selection()
         }
     }
 }
 
 struct OnboardingIntroView: View {
-    var startAction: () -> Void
-    var skipAction: () -> Void
-    
     private let items: [OnboardingIntroItem] = [
         OnboardingIntroItem(
             icon: "square.stack.3d.up.fill",
@@ -125,31 +221,6 @@ struct OnboardingIntroView: View {
             Spacer()
         }
         .padding(.horizontal, 20)
-        .safeAreaInset(edge: .bottom) {
-            HStack(spacing: 12) {
-                Button("Überspringen", action: skipAction)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button(action: startAction) {
-                    Text("Starten")
-                        .font(.headline)
-                        .padding(.horizontal, 28)
-                        .padding(.vertical, 14)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(themeTintShape)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .padding(.horizontal)
-            .padding(.bottom, 8)
-        }
-    }
-    
-    private var themeTintShape: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Color.accentColor)
     }
 }
 
@@ -326,6 +397,7 @@ struct OnboardingEnterDetailsView: View {
                             }
                             .contentShape(Circle())
                             .onTapGesture {
+                                AppHaptics.selection()
                                 withAnimation(.easeInOut(duration: 0.15)) {
                                     viewModel.selectedColor = option.color
                                 }
@@ -345,6 +417,7 @@ struct OnboardingEnterDetailsView: View {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 6), spacing: 12) {
                         ForEach(symbolCandidates, id: \.self) { name in
                             Button {
+                                AppHaptics.selection()
                                 viewModel.selectedSystemImageName = name
                                 viewModel.selectedImage = nil
                             } label: {

@@ -26,10 +26,10 @@ struct WidgetSettingsView: View {
                         SettingsListIconBadge(systemName: "square.on.square.intersection.dashed", tint: theme.uiAccentColor)
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Transparenter Hintergrund")
-                                .appTitle()
+                                .font(.body)
                                 .foregroundStyle(.primary)
                             Text("Dein Widget übernimmt den Hintergrund von einem Homescreen-Screenshot.")
-                                .appMeta()
+                                .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -49,6 +49,7 @@ struct WidgetSettingsView: View {
                     .contextMenu {
                         if backgroundImage != nil {
                             Button(role: .destructive) {
+                                AppHaptics.warning()
                                 WidgetSettingsStore.clearBackground()
                                 backgroundImage = nil
                                 WidgetCenter.shared.reloadAllTimelines()
@@ -61,7 +62,7 @@ struct WidgetSettingsView: View {
                     Text("Homescreen-Screenshot")
                 } footer: {
                     Text("Screenshot ohne Widgets aufnehmen und das Vorschaufeld antippen. So bleibt das Cropping deckungsgleich.")
-                        .appMeta()
+                        .font(.footnote)
                 }
 
                 Section {
@@ -74,11 +75,12 @@ struct WidgetSettingsView: View {
                     Text("Home Screen Icons")
                 } footer: {
                     Text("Die Transparenz hängt von der Icon-Größe ab. Die Auswahl hier muss deinem Homescreen entsprechen.")
-                        .appMeta()
+                        .font(.footnote)
                 }
 
                 Section {
                     Button {
+                        AppHaptics.success()
                         WidgetSettingsStore.touchRefreshToken()
                         refreshToken = Date().timeIntervalSince1970
                         WidgetCenter.shared.reloadAllTimelines()
@@ -90,14 +92,14 @@ struct WidgetSettingsView: View {
                     Text("Aktualisieren")
                 } footer: {
                     Text("Nutze das, wenn Hintergrund oder Inhalte nicht sofort übernommen werden.")
-                        .appMeta()
+                        .font(.footnote)
                 }
             }
         }
         .sheetCornerAlignedScrollContent()
+        .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
-        .listStyle(.insetGrouped)
         .navigationTitle("Widgets")
         .navigationBarTitleDisplayMode(.inline)
         .tint(theme.uiAccentColor)
@@ -115,15 +117,20 @@ struct WidgetSettingsView: View {
                 }
                 await MainActor.run {
                     backgroundImage = image
+                    if image != nil {
+                        AppHaptics.success()
+                    }
                     WidgetCenter.shared.reloadAllTimelines()
                     isLoadingImage = false
                 }
             }
         }
         .onChange(of: transparentEnabled) {
+            AppHaptics.selection()
             WidgetCenter.shared.reloadAllTimelines()
         }
         .onChange(of: iconSizeSelection) {
+            AppHaptics.selection()
             WidgetCenter.shared.reloadAllTimelines()
         }
     }
@@ -148,10 +155,10 @@ struct WidgetSettingsView: View {
                         VStack(spacing: 8) {
                             Image(systemName: "photo")
                                 .font(.system(size: 22))
-                                .fontWeight(.light)
+                                .fontWeight(.regular)
                                 .foregroundStyle(theme.uiAccentColor)
                             Text(isLoadingImage ? "Lädt Screenshot…" : "Kein Screenshot ausgewählt")
-                                .appMeta()
+                                .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -178,7 +185,7 @@ struct WidgetSettingsView: View {
         HStack(spacing: 12) {
             SettingsListIconBadge(systemName: systemName, tint: iconTint ?? theme.uiAccentColor)
             Text(title)
-                .appTitle()
+                .font(.body)
                 .foregroundStyle(textColor)
             Spacer(minLength: 0)
 
@@ -210,18 +217,22 @@ private enum WidgetSettingsStore {
     }
 
     static func loadBackground() -> UIImage? {
-        guard let data = defaults.data(forKey: backgroundKey()) else { return nil }
+        let key = backgroundKey()
+        guard let data = AppGroupBlobStore.data(forKey: key) ?? defaults.data(forKey: key) else { return nil }
         return UIImage(data: data)
     }
 
     static func saveBackground(_ image: UIImage) {
-        if let data = image.pngData() {
-            defaults.set(data, forKey: backgroundKey())
-        }
+        guard let data = image.jpegData(compressionQuality: 0.82) ?? image.pngData() else { return }
+        let key = backgroundKey()
+        AppGroupBlobStore.write(data, forKey: key)
+        defaults.removeObject(forKey: key)
     }
 
     static func clearBackground() {
-        defaults.removeObject(forKey: backgroundKey())
+        let key = backgroundKey()
+        defaults.removeObject(forKey: key)
+        AppGroupBlobStore.remove(forKey: key)
     }
 
     static func touchRefreshToken() {

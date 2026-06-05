@@ -171,7 +171,7 @@ struct FeedDetailView: View {
         guard !list.isEmpty, let currentIndex = currentIndex(in: list), currentIndex > list.startIndex else { return }
         let target = list[list.index(before: currentIndex)]
         pendingNavigationDirection = .previous
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        AppHaptics.softImpact()
         withAnimation(.smooth(duration: 0.22)) { onNavigateToEntry(target, .previous) }
     }
 
@@ -182,7 +182,7 @@ struct FeedDetailView: View {
         guard nextIndex < list.endIndex else { return }
         let target = list[nextIndex]
         pendingNavigationDirection = .next
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        AppHaptics.softImpact()
         withAnimation(.smooth(duration: 0.22)) { onNavigateToEntry(target, .next) }
     }
 
@@ -314,7 +314,10 @@ struct FeedDetailView: View {
             // Left cluster
             if bothExpanded || isLeftBarExpanded {
                 HStack(spacing: FeedDetailLayout.compactToolbarSpacing) {
-                    Button(action: { activeSheet = .readerSettings }) {
+                    Button(action: {
+                        AppHaptics.selection()
+                        activeSheet = .readerSettings
+                    }) {
                         Image(systemName: "textformat.size")
                             .fontWeight(.light)
                             .foregroundStyle(resolvedFeedColor)
@@ -322,21 +325,30 @@ struct FeedDetailView: View {
                     .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
                     .accessibilityLabel("Lesedarstellung")
                     .accessibilityHint("Öffnet Einstellungen für Schrift und Layout")
-                    Button(action: { if let url = URL(string: entry.link) { UIApplication.shared.open(url) } }) {
+                    Button(action: {
+                        AppHaptics.lightImpact()
+                        if let url = URL(string: entry.link) { UIApplication.shared.open(url) }
+                    }) {
                         Image(systemName: "safari")
                             .fontWeight(.light)
                             .foregroundStyle(resolvedFeedColor)
                     }
                     .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
                     .accessibilityLabel("In Safari öffnen")
-                    Button(action: { gatherShareContent() }) {
+                    Button(action: {
+                        AppHaptics.selection()
+                        gatherShareContent()
+                    }) {
                         Image(systemName: "square.and.arrow.up")
                             .fontWeight(.light)
                             .foregroundStyle(resolvedFeedColor)
                     }
                     .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
                     .accessibilityLabel("Teilen")
-                    Button(action: { activeSheet = .articleSummary }) {
+                    Button(action: {
+                        AppHaptics.selection()
+                        activeSheet = .articleSummary
+                    }) {
                         Image(systemName: "text.line.3.summary")
                             .fontWeight(.light)
                             .foregroundStyle(resolvedFeedColor)
@@ -354,10 +366,9 @@ struct FeedDetailView: View {
                 .padding(.horizontal, FeedDetailLayout.compactToolbarHorizontalPadding)
             } else {
                 Button {
-                    withAnimation(.snappy(duration: 0.2)) {
-                        isLeftBarExpanded = true
-                        bothExpanded = true
-                    }
+                    AppHaptics.selection()
+                    isLeftBarExpanded = true
+                    bothExpanded = true
                 } label: {
                     Image(systemName: "ellipsis")
                         .fontWeight(.light)
@@ -392,11 +403,10 @@ struct FeedDetailView: View {
                 .padding(.horizontal, FeedDetailLayout.compactToolbarHorizontalPadding)
             } else {
                 Button {
-                    withAnimation(.snappy(duration: 0.2)) {
-                        isLeftBarExpanded = true
-                        isRightBarExpanded = true
-                        bothExpanded = true
-                    }
+                    AppHaptics.selection()
+                    isLeftBarExpanded = true
+                    isRightBarExpanded = true
+                    bothExpanded = true
                 } label: {
                     Image(systemName: "chevron.left.chevron.right")
                         .fontWeight(.light)
@@ -410,6 +420,7 @@ struct FeedDetailView: View {
     
     private func onToggleReadAction() {
         isReadLocal.toggle()
+        AppHaptics.selection()
         store.setRead(isReadLocal, articleID: entry.link)
         onToggleRead?(isReadLocal)
     }
@@ -447,12 +458,12 @@ struct FeedDetailView: View {
                 )
                 .opacity(max(0, 1 - collapseProgress))
                 .offset(y: -FeedDetailLayout.headerCollapseOffset * collapseProgress)
+
             
             GeometryReader { proxy in
                 let fullWidth = proxy.size.width
                 let barHeight: CGFloat = 2
                 let collapsedHeaderBottom = 0.0
-                let collapsedBarVisibility = max(0, min(1, (collapseProgress - 0.72) / 0.2))
                 ZStack(alignment: .topLeading) {
                     Rectangle()
                         .fill(Color.primary.opacity(0.1))
@@ -460,10 +471,10 @@ struct FeedDetailView: View {
                     Rectangle()
                         .fill(resolvedFeedColor)
                         .frame(width: fullWidth * max(0, min(1, readingProgress)), height: barHeight)
+                        .animation(.linear(duration: 0.15), value: readingProgress)
                 }
                 .padding(.horizontal, 0)
                 .offset(y: collapsedHeaderBottom)
-                .opacity(collapsedBarVisibility)
             }
             .allowsHitTesting(false)
         }
@@ -515,11 +526,10 @@ struct FeedDetailView: View {
                     isRightBarExpanded != shouldExpand else {
                 return
             }
-            withAnimation(UIStylePolicy.Motion.detailScrollSpring) {
-                isLeftBarExpanded = shouldExpand
-                isRightBarExpanded = shouldExpand
-                bothExpanded = shouldExpand
-            }
+            // Removed animation for collapseProgress changes
+            isLeftBarExpanded = shouldExpand
+            isRightBarExpanded = shouldExpand
+            bothExpanded = shouldExpand
         }
         .onChange(of: readerFontScale) { _, newValue in
             FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerFontScale)
@@ -1234,6 +1244,7 @@ struct FeedDetailView: View {
     private func toggleBookmark() {
         BookmarkService.toggleBookmark(for: entry, context: modelContext)
         isBookmarked = BookmarkService.isBookmarked(link: entry.link, context: modelContext)
+        AppHaptics.selection()
         onToggleBookmark?(isBookmarked)
     }
 }
@@ -1336,23 +1347,21 @@ struct WebView: UIViewRepresentable {
             let minOffsetY = -topInset
             let maxOffsetY = max(minOffsetY, scrollView.contentSize.height - scrollView.bounds.height + bottomInset)
 
-            // Only react to real user scrolling
-            guard scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating else { return }
-
             let clampedOffsetY = min(max(currentOffset, minOffsetY), maxOffsetY)
             let scrollDistanceFromTop = max(0, clampedOffsetY - minOffsetY)
+            let shouldUpdateChrome = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
             let progress = min(1, scrollDistanceFromTop / collapseRange)
 
-            // Update binding only if significant change
-            if abs(progress - collapseProgress) > progressUpdateThreshold {
+            // Header chrome should follow user-driven scroll, while reading progress
+            // also needs to track WebKit layout and programmatic offset updates.
+            if shouldUpdateChrome && abs(progress - collapseProgress) > progressUpdateThreshold {
                 updateCollapseProgress(progress)
             }
 
-            let contentHeight = scrollView.contentSize.height
-            let visibleHeight = scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom
-            let totalScrollable = max(1, contentHeight - visibleHeight)
-            let progressRaw = (clampedOffsetY - minOffsetY) / totalScrollable
-            let clamped = max(0, min(1, progressRaw))
+            let scrollableDistance = max(0, maxOffsetY - minOffsetY)
+            let clamped = scrollableDistance > 0
+                ? max(0, min(1, (clampedOffsetY - minOffsetY) / scrollableDistance))
+                : 1
             if abs(clamped - readingProgress) > progressUpdateThreshold {
                 updateReadingProgress(clamped)
             }

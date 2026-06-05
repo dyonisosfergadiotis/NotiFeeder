@@ -12,7 +12,7 @@ import Combine
 
 @MainActor
 final class OnboardingViewModel: ObservableObject {
-    enum Step: Int, CaseIterable {
+    enum Step: Int, CaseIterable, Hashable {
         case intro
         case enterURL
         case enterDetails
@@ -25,9 +25,10 @@ final class OnboardingViewModel: ObservableObject {
     // Inputs
     @Published var feedURL: String = ""
     @Published var feedName: String = ""
+    @Published var attemptedURLAdvance: Bool = false
 
     // Icon / color selection
-    @Published var selectedColor: Color = .blue
+    @Published var selectedColor: Color = FeedColorOption.defaultPalette.first?.color ?? .blue
     @Published var selectedSystemImageName: String? = "dot.radiowaves.left.and.right"
     @Published var selectedImage: UIImage? = nil
 
@@ -41,6 +42,15 @@ final class OnboardingViewModel: ObservableObject {
         return FeedSource(title: title, url: url.absoluteString)
     }
 
+    var selectedColorHex: String? {
+        selectedColor.toHex()
+    }
+
+    var urlValidationMessage: String? {
+        guard attemptedURLAdvance, !canProceedFromURL() else { return nil }
+        return "Gib eine gültige Feed-URL ein, um weiterzugehen."
+    }
+
     func canProceedFromURL() -> Bool {
         normalizedFeedURLString() != nil
     }
@@ -50,8 +60,29 @@ final class OnboardingViewModel: ObservableObject {
     }
 
     func next() {
-        guard let idx = Step.allCases.firstIndex(of: step), idx + 1 < Step.allCases.count else { return }
-        step = Step.allCases[idx + 1]
+        switch step {
+        case .intro:
+            step = .enterURL
+        case .enterURL:
+            guard canProceedFromURL() else {
+                attemptedURLAdvance = true
+                return
+            }
+            attemptedURLAdvance = false
+            step = .enterDetails
+        case .enterDetails:
+            guard canProceedFromDetails() else {
+                attemptedURLAdvance = true
+                step = .enterURL
+                return
+            }
+            attemptedURLAdvance = false
+            step = .features
+        case .features:
+            step = .done
+        case .done:
+            return
+        }
     }
 
     func back() {
@@ -66,12 +97,16 @@ final class OnboardingViewModel: ObservableObject {
         if
             let direct = URL(string: trimmed),
             let scheme = direct.scheme,
-            !scheme.isEmpty
+            !scheme.isEmpty,
+            direct.host != nil
         {
             return direct.absoluteString
         }
 
-        if let httpsPrefixed = URL(string: "https://\(trimmed)") {
+        if
+            let httpsPrefixed = URL(string: "https://\(trimmed)"),
+            httpsPrefixed.host != nil
+        {
             return httpsPrefixed.absoluteString
         }
 

@@ -69,7 +69,7 @@ enum FeedRefreshState {
 final class FeedRefreshEngine {
     static let shared = FeedRefreshEngine()
 
-    private let feedClient = FeedNetworkClient()
+    private let feedClient = FeedNetworkClient(maxRetries: 1, timeout: 8)
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
     private let maxCachedEntries = 1500

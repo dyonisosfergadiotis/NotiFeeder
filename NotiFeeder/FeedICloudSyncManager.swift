@@ -209,6 +209,32 @@ final class FeedICloudSyncManager {
             let normalizedLocalToken = localToken > 0 ? localToken : 0
             let normalizedCloudToken = cloudToken > 0 ? cloudToken : 0
 
+            if key == FeedStorage.Keys.savedFeeds,
+               let mergedData = mergedSavedFeedsData(localData: local, remoteData: remote) {
+                let resolvedToken = max(normalizedLocalToken, normalizedCloudToken).nextUp
+                _ = FeedCacheSync.write(mergedData, for: key, token: resolvedToken)
+                pushToCloud(data: mergedData, token: resolvedToken, for: key)
+                if mergedData != local {
+                    NotificationCenter.default.post(name: .feedSavedFeedsDidSyncFromICloud, object: nil)
+                }
+                return
+            }
+
+            if key == FeedStorage.Keys.feedColorMap,
+               let mergedData = mergedFeedColorMapData(
+                    localData: local,
+                    remoteData: remote,
+                    preferLocalValues: normalizedLocalToken >= normalizedCloudToken
+               ) {
+                let resolvedToken = max(normalizedLocalToken, normalizedCloudToken).nextUp
+                _ = FeedCacheSync.write(mergedData, for: key, token: resolvedToken)
+                pushToCloud(data: mergedData, token: resolvedToken, for: key)
+                if mergedData != local {
+                    NotificationCenter.default.post(name: .feedColorMapDidSyncFromICloud, object: nil)
+                }
+                return
+            }
+
             if normalizedCloudToken > normalizedLocalToken {
                 applyCloud(remote, token: normalizedCloudToken, for: key)
             } else if normalizedLocalToken > normalizedCloudToken {
@@ -260,16 +286,67 @@ final class FeedICloudSyncManager {
             var resolvedToken = pending.token
 
             if cloudData != pending.data, cloudToken >= resolvedToken {
-                guard self.shouldDeferCloudApply(for: key, localData: pending.data, cloudData: cloudData) else {
-                    return
+                if key == FeedStorage.Keys.savedFeeds {
+                    resolvedToken = cloudToken.nextUp
+                    _ = FeedCacheSync.write(pending.data, for: key, token: resolvedToken)
+                } else {
+                    guard self.shouldDeferCloudApply(for: key, localData: pending.data, cloudData: cloudData) else {
+                        return
+                    }
+                    resolvedToken = cloudToken.nextUp
+                    _ = FeedCacheSync.write(pending.data, for: key, token: resolvedToken)
                 }
-                resolvedToken = cloudToken.nextUp
-                _ = FeedCacheSync.write(pending.data, for: key, token: resolvedToken)
             }
 
             guard cloudData != pending.data || cloudToken < resolvedToken else { return }
             self.pushToCloud(data: pending.data, token: resolvedToken, for: key)
         }
+    }
+
+    private func mergedSavedFeedsData(localData: Data, remoteData: Data) -> Data? {
+        guard let localFeeds = try? JSONDecoder().decode([FeedSource].self, from: localData),
+              let remoteFeeds = try? JSONDecoder().decode([FeedSource].self, from: remoteData) else {
+            return nil
+        }
+
+        let deletedURLs = FeedStorage.deletedFeedURLs()
+        var mergedFeeds = localFeeds
+        var existingURLs = Set(localFeeds.map(\.url))
+
+        for remoteFeed in remoteFeeds {
+            guard !existingURLs.contains(remoteFeed.url),
+                  !deletedURLs.contains(remoteFeed.url) else {
+                continue
+            }
+            mergedFeeds.append(remoteFeed)
+            existingURLs.insert(remoteFeed.url)
+        }
+
+        return try? JSONEncoder().encode(mergedFeeds)
+    }
+
+    private func mergedFeedColorMapData(localData: Data,
+                                        remoteData: Data,
+                                        preferLocalValues: Bool) -> Data? {
+        guard let localMap = try? JSONDecoder().decode([String: String].self, from: localData),
+              let remoteMap = try? JSONDecoder().decode([String: String].self, from: remoteData) else {
+            return nil
+        }
+
+        let deletedURLs = FeedStorage.deletedFeedURLs()
+        var merged = preferLocalValues ? remoteMap : localMap
+        let overlay = preferLocalValues ? localMap : remoteMap
+
+        for (url, hex) in overlay where !deletedURLs.contains(url) {
+            merged[url] = hex
+        }
+
+        for deletedURL in deletedURLs {
+            merged.removeValue(forKey: deletedURL)
+        }
+
+        guard merged != localMap || merged != remoteMap else { return nil }
+        return try? JSONEncoder().encode(merged)
     }
 
     private func scheduleCloudSynchronize() {

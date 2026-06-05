@@ -1,0 +1,15 @@
+{
+  "originHash" : "d54a2246b83d1dbd9cff8149febec1305eff032e524f709980a4ffc4f1259a89",
+  "pins" : [
+    {
+      "identity" : "fabbar",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ryanashcraft/FabBar.git",
+      "state" : {
+        "revision" : "4f05fc7815fc676683807574fec4a826f49588da",
+        "version" : "1.1.0"
+      }
+    }
+  ],
+  "version" : 3
+}

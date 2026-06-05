@@ -24,14 +24,41 @@ struct FeedDraft {
         !trimmedTitle.isEmpty && !trimmedURL.isEmpty
     }
 
+    var normalizedURLString: String? {
+        guard !trimmedURL.isEmpty else { return nil }
+
+        if
+            let direct = URL(string: trimmedURL),
+            let scheme = direct.scheme,
+            !scheme.isEmpty,
+            direct.host != nil
+        {
+            return direct.absoluteString
+        }
+
+        if
+            let httpsPrefixed = URL(string: "https://\(trimmedURL)"),
+            httpsPrefixed.host != nil
+        {
+            return httpsPrefixed.absoluteString
+        }
+
+        return nil
+    }
+
     func makeFeedSource(requireValidURL: Bool, fallbackTitleToURL: Bool) -> FeedSource? {
         guard !trimmedURL.isEmpty else { return nil }
-        if requireValidURL, URL(string: trimmedURL) == nil {
-            return nil
+        let resolvedURL: String
+        if requireValidURL {
+            guard let normalizedURLString else { return nil }
+            resolvedURL = normalizedURLString
+        } else {
+            resolvedURL = trimmedURL
         }
-        let resolvedTitle = fallbackTitleToURL && trimmedTitle.isEmpty ? trimmedURL : trimmedTitle
+        let fallbackTitle = URL(string: resolvedURL)?.host ?? resolvedURL
+        let resolvedTitle = fallbackTitleToURL && trimmedTitle.isEmpty ? fallbackTitle : trimmedTitle
         guard !resolvedTitle.isEmpty else { return nil }
-        return FeedSource(title: resolvedTitle, url: trimmedURL)
+        return FeedSource(title: resolvedTitle, url: resolvedURL)
     }
 }
 
@@ -44,17 +71,26 @@ struct FeedColorPalettePicker: View {
             HStack(spacing: UIStylePolicy.Spacing.xLarge) {
                 ForEach(FeedColorOption.palette) { option in
                     Button {
-                        selectedColor = option
+                        AppHaptics.selection()
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            selectedColor = option
+                        }
                     } label: {
-                        Circle()
-                            .fill(option.color)
-                            .frame(width: 44, height: 44)
-                            .overlay {
-                                if option == selectedColor {
+                        ZStack {
+                            Circle()
+                                .fill(option.color)
+                                .frame(width: 34, height: 34)
+                                .overlay {
                                     Circle()
-                                        .stroke(theme.uiAccentColor, lineWidth: UIStylePolicy.Spacing.xSmall)
+                                        .stroke(option == selectedColor ? theme.uiAccentColor : Color.clear, lineWidth: 3)
                                 }
+
+                            if option == selectedColor {
+                                Image(systemName: "checkmark")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(.black.opacity(0.72))
                             }
+                        }
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(option.name)
@@ -73,9 +109,14 @@ struct FeedEditorForm: View {
     @Binding var url: String
     @Binding var selectedColor: FeedColorOption
     let includeDetailsSection: Bool
+    @EnvironmentObject private var theme: ThemeSettings
 
     var body: some View {
         Form {
+            Section {
+                AddFeedPreview(title: title, url: url, color: selectedColor.color)
+            }
+
             if includeDetailsSection {
                 Section("Details") {
                     fields
@@ -92,8 +133,11 @@ struct FeedEditorForm: View {
 
     private var fields: some View {
         Group {
-            TextField("Titel", text: $title)
-            TextField("RSS-URL", text: $url)
+            TextField("Name", text: $title)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+
+            TextField("Feed URL", text: $url)
                 .keyboardType(.URL)
                 .autocapitalization(.none)
                 .textInputAutocapitalization(.never)
@@ -111,40 +155,103 @@ struct AddFeedView: View {
     var onSave: (String, String) -> Void
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             FeedEditorForm(
                 title: $title,
                 url: $url,
                 selectedColor: $selectedColor,
                 includeDetailsSection: false
             )
+            .scrollContentBackground(.hidden)
+            .background(SettingsChromeBackground(accent: theme.uiAccentColor).ignoresSafeArea())
+            .listStyle(.insetGrouped)
             .navigationTitle("Feed hinzufügen")
+            .navigationBarTitleDisplayMode(.inline)
             .sheetCornerAlignedScrollContent()
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Speichern") {
+                    Button("Sichern") {
                         let draft = FeedDraft(title: title, url: url)
-                        guard draft.hasTitleAndURL else { return }
-                        theme.setColor(selectedColor, for: draft.trimmedURL)
-                        onSave(draft.trimmedTitle, draft.trimmedURL)
+                        guard let feed = draft.makeFeedSource(requireValidURL: true, fallbackTitleToURL: true) else { return }
+                        AppHaptics.success()
+                        theme.setColor(selectedColor, for: feed.url)
+                        FaviconCache.prefetchFavicon(for: feed.url)
+                        onSave(feed.title, feed.url)
                         dismiss()
-                    }.disabled(!FeedDraft(title: title, url: url).hasTitleAndURL)
+                    }.disabled(FeedDraft(title: title, url: url).makeFeedSource(requireValidURL: true, fallbackTitleToURL: true) == nil)
                         .tint(theme.uiAccentColor)
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.title3)
-                            .fontWeight(.light)
-                    }
-                    .minimumHitTarget()
-                    .tint(theme.uiAccentColor)
-                    .accessibilityLabel("Schließen")
+                    Button("Abbrechen") { dismiss() }
                 }
             }
         }
         .tint(theme.uiAccentColor)
+    }
+}
+
+private struct AddFeedPreview: View {
+    let title: String
+    let url: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack {
+                Circle()
+                    .fill(color.gradient)
+
+                Text(previewLetter)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 58, height: 58)
+            .shadow(color: color.opacity(0.22), radius: 9, y: 4)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(previewTitle)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Text(previewSubtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var draft: FeedDraft {
+        FeedDraft(title: title, url: url)
+    }
+
+    private var previewTitle: String {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedTitle.isEmpty { return trimmedTitle }
+        if let host = previewHost { return host }
+        return "Neuer Feed"
+    }
+
+    private var previewSubtitle: String {
+        previewHost ?? "RSS-Adresse einfügen"
+    }
+
+    private var previewHost: String? {
+        guard
+            let normalized = draft.normalizedURLString,
+            let host = URL(string: normalized)?.host
+        else { return nil }
+        return host
+    }
+
+    private var previewLetter: String {
+        if let first = previewTitle.first {
+            return String(first).uppercased()
+        }
+        return "N"
     }
 }

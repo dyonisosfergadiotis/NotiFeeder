@@ -10,17 +10,17 @@ import SwiftData
 
 @Model
 final class FeedEntryModel: Identifiable, Hashable {
-    var id: UUID
-    var title: String
-    var shortTitle: String
-    var link: String
-    var content: String
+    var id: UUID = UUID()
+    var title: String = ""
+    var shortTitle: String = ""
+    var link: String = ""
+    var content: String = ""
     var contentRaw: String?
     var author: String?
     var sourceTitle: String?
     var sourceURL: String?
     var pubDateString: String?
-    var date: Date
+    var date: Date = Date()
     
     // Flags für Status
     var isBookmarked: Bool = false

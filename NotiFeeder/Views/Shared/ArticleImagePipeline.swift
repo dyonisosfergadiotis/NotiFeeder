@@ -17,6 +17,9 @@ actor ArticleImagePipeline {
     init() {
         let configuration = URLSessionConfiguration.default
         configuration.requestCachePolicy = .returnCacheDataElseLoad
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 12
+        configuration.httpMaximumConnectionsPerHost = 4
         configuration.urlCache = .shared
         self.session = URLSession(configuration: configuration)
     }
@@ -38,7 +41,7 @@ actor ArticleImagePipeline {
                 if url.isFileURL {
                     data = try Data(contentsOf: url, options: [.mappedIfSafe])
                 } else {
-                    let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 20)
+                    let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 8)
                     let (remoteData, _) = try await session.data(for: request)
                     data = remoteData
                 }

@@ -412,7 +412,8 @@ private struct WidgetCore {
         }
 
         var cachedEntries: [WidgetFeedEntryCache] = []
-        if let data = defaults.data(forKey: "cachedEntries"), let decoded = WidgetFeedEntryCache.decode(from: data) {
+        if let data = AppGroupBlobStore.data(forKey: "cachedEntries") ?? defaults.data(forKey: "cachedEntries"),
+           let decoded = WidgetFeedEntryCache.decode(from: data) {
             cachedEntries = decoded
         }
 
@@ -567,7 +568,7 @@ private struct WidgetCore {
     }
 
     static func loadBookmarkedLinks(from defaults: UserDefaults) -> Set<String> {
-        guard let data = defaults.data(forKey: bookmarkedArticleIDsKey),
+        guard let data = AppGroupBlobStore.data(forKey: bookmarkedArticleIDsKey) ?? defaults.data(forKey: bookmarkedArticleIDsKey),
               let links = try? JSONDecoder().decode([String].self, from: data) else {
             return []
         }
@@ -585,7 +586,8 @@ private struct WidgetCore {
     static func loadBackgroundImage(for family: WidgetFamily, position: WidgetGridPosition) -> Image? {
         let defaults = WidgetAppearance.defaults()
         let key = WidgetAppearance.backgroundKey()
-        guard let data = defaults.data(forKey: key), let uiImage = UIImage(data: data) else { return nil }
+        guard let data = AppGroupBlobStore.data(forKey: key) ?? defaults.data(forKey: key),
+              let uiImage = UIImage(data: data) else { return nil }
         let cropped = crop(image: uiImage, for: family, position: position)
         return Image(uiImage: cropped ?? uiImage)
     }

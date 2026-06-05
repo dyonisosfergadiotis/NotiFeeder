@@ -111,19 +111,9 @@ struct ArticleCardView: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
-                cardShape
-                    .fill(cardBaseBackground)
-                    .overlay { cardTintOverlay }
-                    .overlay {
-                        cardShape
-                            .strokeBorder(feedColor.opacity(cardBorderOpacity))
-                            .clipped()
-                    }
+                cardSurface
             }
-            .overlay {
-                cardShape
-                    .strokeBorder(Color.primary.opacity(cardInnerStrokeOpacity), lineWidth: 1)
-            }
+            .compositingGroup()
             .shadow(color: .black.opacity(primaryShadowOpacity),
                     radius: primaryShadowRadius,
                     x: 0,
@@ -169,11 +159,36 @@ struct ArticleCardView: View {
         RoundedRectangle(cornerRadius: 20, style: .continuous)
     }
 
-    private var cardBaseBackground: Color {
+    @ViewBuilder
+    private var cardSurface: some View {
+        cardShape
+            .fill(cardBaseSurface)
+            .overlay { cardBaseTint }
+            .overlay { cardTintOverlay }
+            .overlay {
+                cardShape
+                    .strokeBorder(feedColor.opacity(cardBorderOpacity), lineWidth: 1)
+                    .clipped()
+            }
+            .overlay {
+                cardShape
+                    .strokeBorder(Color.primary.opacity(cardInnerStrokeOpacity), lineWidth: 1)
+            }
+    }
+
+    private var cardBaseSurface: Color {
+        colorScheme == .dark ? Color(.secondarySystemBackground) : Color(.systemBackground)
+    }
+
+    @ViewBuilder
+    private var cardBaseTint: some View {
         if useFullColorBackground {
-            return Color(feedColor).opacity(UIStylePolicy.fullColorCardInteriorOpacity)
+            cardShape
+                .fill(Color(feedColor).opacity(currentBackgroundOpacity))
+        } else {
+            cardShape
+                .fill(readCardBackground)
         }
-        return readCardBackground
     }
 
     private var currentBackgroundOpacity: Double {
@@ -194,9 +209,7 @@ struct ArticleCardView: View {
 
     @ViewBuilder
     private var cardTintOverlay: some View {
-        if useFullColorBackground {
-            fullColorEdgeOverlay
-        } else {
+        if !useFullColorBackground {
             unreadTintOverlay
         }
     }
@@ -261,27 +274,27 @@ struct ArticleCardView: View {
     }
 
     private var primaryShadowOpacity: Double {
-        interpolate(unread: 0.10, read: 0.045)
+        interpolate(unread: 0.08, read: 0.035)
     }
 
     private var primaryShadowRadius: CGFloat {
-        CGFloat(interpolate(unread: 9, read: 4))
+        CGFloat(interpolate(unread: 7, read: 3))
     }
 
     private var primaryShadowYOffset: CGFloat {
-        CGFloat(interpolate(unread: 5, read: 2))
+        CGFloat(interpolate(unread: 4, read: 1.5))
     }
 
     private var accentShadowOpacity: Double {
-        interpolate(unread: 0.12, read: 0)
+        interpolate(unread: 0.08, read: 0)
     }
 
     private var accentShadowRadius: CGFloat {
-        CGFloat(interpolate(unread: 10, read: 0))
+        CGFloat(interpolate(unread: 7, read: 0))
     }
 
     private var accentShadowYOffset: CGFloat {
-        CGFloat(interpolate(unread: 4, read: 0))
+        CGFloat(interpolate(unread: 3, read: 0))
     }
 
     private var unreadProgress: Double {
@@ -378,6 +391,7 @@ private struct ArticleCardThumbnailView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(feedColor.opacity(interpolate(unread: 0.38, read: 0.22)), lineWidth: 1)
         )
+        .compositingGroup()
         .shadow(color: .black.opacity(interpolate(unread: 0.09, read: 0.045)),
                 radius: interpolateCGFloat(unread: 7, read: 3),
                 x: 0,
@@ -394,13 +408,18 @@ private struct ArticleCardThumbnailView: View {
             }
 
             loadedImage = nil
-            isLoading = true
-            let maxPixelSize = max(140, 90 * displayScale * 2)
             let effectiveURL = OfflineArticleArchive.cachedAssetFileURL(for: url) ?? url
+            if !effectiveURL.isFileURL {
+                try? await Task.sleep(nanoseconds: 180_000_000)
+                guard !Task.isCancelled else { return }
+            }
+
+            isLoading = true
+            defer { isLoading = false }
+            let maxPixelSize = max(140, 90 * displayScale * 2)
             let image = await ArticleImagePipeline.shared.image(for: effectiveURL, maxPixelSize: maxPixelSize)
             guard !Task.isCancelled else { return }
             loadedImage = image
-            isLoading = false
         }
     }
 

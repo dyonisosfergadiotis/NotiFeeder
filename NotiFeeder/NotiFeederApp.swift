@@ -28,26 +28,16 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         FeedBackgroundRefreshManager.scheduleNext()
 
         Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
             FeedICloudSyncManager.shared.configureIfNeeded()
             FeedCloudKitSyncManager.shared.configureIfNeeded()
         }
         return true
     }
 
-    func applicationWillEnterForeground(_ application: UIApplication) {
-        Task { @MainActor in
-            FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
-            await FeedCloudKitSyncManager.shared.syncAllFromCloudIfPossible()
-        }
-    }
-
     func applicationDidBecomeActive(_ application: UIApplication) {
         FeedBackgroundRefreshManager.scheduleNext()
-
-        Task { @MainActor in
-            FeedICloudSyncManager.shared.syncAllFromCloudIfNeeded()
-            await FeedCloudKitSyncManager.shared.syncAllFromCloudIfPossible()
-        }
     }
 
     func applicationDidEnterBackground(_ application: UIApplication) {

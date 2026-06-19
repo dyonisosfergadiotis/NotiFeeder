@@ -1,6 +1,26 @@
 import SwiftUI
 
 enum UIStylePolicy {
+    enum Brand {
+        static let appIconLightHex = "#A6CDFB"
+        static let appIconDeepHex = "#6182A2"
+
+        static var appIconLight: Color { Color.fromHex(appIconLightHex) }
+        static var appIconDeep: Color { Color.fromHex(appIconDeepHex) }
+        static var fallbackAccent: Color { appIconDeep }
+
+        static func accent(for colorScheme: ColorScheme) -> Color {
+            colorScheme == .dark ? appIconLight : appIconDeep
+        }
+
+        static func iconGradientColors(for colorScheme: ColorScheme? = nil) -> [Color] {
+            if colorScheme == .dark {
+                return [appIconDeep, appIconLight]
+            }
+            return [appIconLight, appIconDeep]
+        }
+    }
+
     enum Spacing {
         static let xSmall: CGFloat = 4
         static let small: CGFloat = 8

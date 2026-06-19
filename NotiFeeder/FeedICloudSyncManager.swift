@@ -74,6 +74,21 @@ final class FeedICloudSyncManager {
                 key: FeedStorage.Keys.readerTextAlignment,
                 defaultValue: .string("left"),
                 notification: .feedReaderPreferencesDidSyncFromICloud
+            ),
+            SyncedPreference(
+                key: FeedStorage.Keys.readerParagraphSpacing,
+                defaultValue: .double(0.72),
+                notification: .feedReaderPreferencesDidSyncFromICloud
+            ),
+            SyncedPreference(
+                key: FeedStorage.Keys.readerContentWidth,
+                defaultValue: .double(720),
+                notification: .feedReaderPreferencesDidSyncFromICloud
+            ),
+            SyncedPreference(
+                key: FeedStorage.Keys.readerMediaWidth,
+                defaultValue: .double(90),
+                notification: .feedReaderPreferencesDidSyncFromICloud
             )
         ]
     }

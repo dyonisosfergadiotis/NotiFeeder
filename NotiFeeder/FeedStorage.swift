@@ -1,6 +1,6 @@
 import Foundation
 
-enum FeedStorage {
+nonisolated enum FeedStorage {
     enum Keys {
         static let savedFeeds = "savedFeeds"
         static let savedFeedsDeletedURLs = "savedFeeds.deletedURLs"
@@ -11,12 +11,17 @@ enum FeedStorage {
         static let readArticleIDs = "readArticleIDs"
         static let bookmarkedArticleIDs = "bookmarkedArticleIDs"
         static let lastSuccessfulFeedRefresh = "feed.lastSuccessfulRefreshAt"
+        static let feedHealthSnapshots = "feed.health.snapshots.v1"
+        static let offlineRetainedFetchedArticleLimit = "offline.retainedFetchedArticleLimit"
         static let profileDisplayName = "profile.displayName"
         static let uiCardsStyleFullColor = "ui.cards.style.fullColor"
         static let readerFontScale = "readerFontScale"
         static let readerFontFamily = "readerFontFamily"
         static let readerLineSpacing = "readerLineSpacing"
         static let readerTextAlignment = "readerTextAlignment"
+        static let readerParagraphSpacing = "readerParagraphSpacing"
+        static let readerContentWidth = "readerContentWidth"
+        static let readerMediaWidth = "readerMediaWidth"
         static let widgetSelectedFeedIDs = "nf_widget_selected_feed_ids_v1"
     }
 
@@ -42,12 +47,17 @@ enum FeedStorage {
             Keys.readArticleIDs,
             Keys.bookmarkedArticleIDs,
             Keys.lastSuccessfulFeedRefresh,
+            Keys.feedHealthSnapshots,
+            Keys.offlineRetainedFetchedArticleLimit,
             Keys.profileDisplayName,
             Keys.uiCardsStyleFullColor,
             Keys.readerFontScale,
             Keys.readerFontFamily,
             Keys.readerLineSpacing,
             Keys.readerTextAlignment,
+            Keys.readerParagraphSpacing,
+            Keys.readerContentWidth,
+            Keys.readerMediaWidth,
             Keys.widgetSelectedFeedIDs
         ]
 
@@ -140,7 +150,7 @@ enum FeedStorage {
     }
 }
 
-enum FeedCacheSync {
+nonisolated enum FeedCacheSync {
     static let syncTokenSuffix = ".syncToken"
     private static let blobStorageThreshold = 512 * 1024
     private static let blobBackedKeys: Set<String> = [

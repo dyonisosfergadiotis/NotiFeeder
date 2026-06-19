@@ -30,6 +30,11 @@ enum FeedRefreshTrigger: String, Sendable {
     case manual
 }
 
+nonisolated enum FeedRefreshCadence {
+    static let backgroundMinimumInterval: TimeInterval = 20 * 60
+    static let foregroundMinimumAge: TimeInterval = 10 * 60
+}
+
 struct FeedRefreshResult: Sendable {
     let trigger: FeedRefreshTrigger
     let totalFeeds: Int
@@ -99,6 +104,7 @@ final class FeedRefreshEngine {
         }
 
         var fetchedEntries: [FeedEntry] = []
+        var feedStatuses: [(FeedSource, FeedFetchStatus)] = []
         var successfulFeeds = 0
 
         await withTaskGroup(of: (FeedSource, FeedFetchStatus).self) { group in
@@ -110,6 +116,7 @@ final class FeedRefreshEngine {
             }
 
             for await (feed, status) in group {
+                feedStatuses.append((feed, status))
                 if status.error == nil {
                     successfulFeeds += 1
                 }
@@ -141,6 +148,7 @@ final class FeedRefreshEngine {
         }
 
         let readIDs = loadReadArticleIDs()
+        let bookmarkedLinks = loadBookmarkedArticleIDs()
         let mergedEntries = mergeEntries(
             cachedEntries: loadCachedEntries(),
             freshEntries: fetchedEntries,
@@ -148,16 +156,32 @@ final class FeedRefreshEngine {
             activeFeedURLs: Set(feeds.map(\.url))
         )
         let didWriteCache = persistCachedEntriesIfChanged(mergedEntries)
+        let refreshDate = Date()
+        let articleCounts = articleCountsByFeedURL(in: mergedEntries)
+        let nextRefreshAfter = refreshDate.addingTimeInterval(FeedRefreshCadence.backgroundMinimumInterval)
+        for (feed, status) in feedStatuses {
+            FeedHealthStore.record(
+                feed: feed,
+                status: status,
+                attemptedAt: refreshDate,
+                articleCount: articleCounts[feed.url, default: 0],
+                nextRefreshAfter: nextRefreshAfter
+            )
+        }
 
         if !mergedEntries.isEmpty {
-            let preloadEntries = mergedEntries
+            let preloadEntries = OfflineArticleRetentionPolicy.retainedEntries(
+                from: mergedEntries,
+                readIDs: readIDs,
+                bookmarkedLinks: bookmarkedLinks
+            )
             Task.detached(priority: .utility) {
                 await OfflineArticleArchive.preloader.preload(entries: preloadEntries)
             }
         }
 
         if successfulFeeds > 0 {
-            FeedRefreshState.persistLastSuccessfulRefreshDate(Date())
+            FeedRefreshState.persistLastSuccessfulRefreshDate(refreshDate)
         }
 
         if didWriteCache || successfulFeeds > 0 {
@@ -195,6 +219,15 @@ final class FeedRefreshEngine {
 
     private func loadReadArticleIDs() -> Set<String> {
         let key = FeedStorage.Keys.readArticleIDs
+        guard let data = FeedCacheSync.bestAvailableData(for: key) ?? FeedStorage.defaults.data(forKey: key),
+              let ids = try? decoder.decode([String].self, from: data) else {
+            return []
+        }
+        return Set(ids)
+    }
+
+    private func loadBookmarkedArticleIDs() -> Set<String> {
+        let key = FeedStorage.Keys.bookmarkedArticleIDs
         guard let data = FeedCacheSync.bestAvailableData(for: key) ?? FeedStorage.defaults.data(forKey: key),
               let ids = try? decoder.decode([String].self, from: data) else {
             return []
@@ -287,13 +320,22 @@ final class FeedRefreshEngine {
         FeedCloudKitSyncManager.shared.uploadLocalData(data, token: token, for: key)
         return true
     }
+
+    private func articleCountsByFeedURL(in entries: [FeedEntry]) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for entry in entries {
+            guard let feedURL = entry.feedURL, !feedURL.isEmpty else { continue }
+            counts[feedURL, default: 0] += 1
+        }
+        return counts
+    }
 }
 
 enum FeedBackgroundRefreshManager {
     static let taskIdentifier = "de.DyonisosFergadiotis.NotiFeeder.feedRefresh"
 
     private static var didRegister = false
-    private static let minimumInterval: TimeInterval = 20 * 60
+    private static let minimumInterval: TimeInterval = FeedRefreshCadence.backgroundMinimumInterval
 
     static func registerIfNeeded() {
         guard !didRegister else { return }

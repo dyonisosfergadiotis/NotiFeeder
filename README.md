@@ -29,8 +29,8 @@ Verfügbare Schemes (laut `xcodebuild -list`):
 
 - `NotiFeeder` (iOS App)
 - `NotiFeeder WidgetExtension` (Widget)
-- `NotiFeeder AW` (Watch App)
-- `NotiFeeder AW (Notification)` (Watch Notification Scheme)
+- `NotiFeeder Watch App` (watchOS App)
+- `NotiFeeder WidgetExtension AWExtension` (watchOS Widget)
 
 ## Voraussetzungen
 
@@ -38,7 +38,7 @@ Verfügbare Schemes (laut `xcodebuild -list`):
 - Deployment Targets im Projekt:
   - iOS App: `IPHONEOS_DEPLOYMENT_TARGET = 26.0`
   - Widget: `IPHONEOS_DEPLOYMENT_TARGET = 26.2`
-  - Watch: `WATCHOS_DEPLOYMENT_TARGET = 26.0`
+  - Watch: `WATCHOS_DEPLOYMENT_TARGET = 26.4`
 
 ## Setup (lokal)
 
@@ -69,7 +69,7 @@ xcodebuild -project NotiFeeder.xcodeproj -scheme "NotiFeeder" build
 xcodebuild -project NotiFeeder.xcodeproj -scheme "NotiFeeder WidgetExtension" build
 
 # Watch
-xcodebuild -project NotiFeeder.xcodeproj -scheme "NotiFeeder AW" build
+xcodebuild -project NotiFeeder.xcodeproj -scheme "NotiFeeder Watch App" build
 ```
 
 ## Projektstruktur
@@ -88,8 +88,6 @@ xcodebuild -project NotiFeeder.xcodeproj -scheme "NotiFeeder AW" build
 
 ## Bekannte Grenzen
 
-- `BackgroundRefreshManager` ist aktuell als Gerüst vorhanden, aber nicht in den App-Startfluss integriert.
-- `RefreshFeedsIntent` ist derzeit ein Platzhalter (liefert Status-Text, triggert keinen vollständigen Feed-Refresh).
 - Es gibt aktuell keine automatisierten Unit/UI-Tests im Repository.
 
 ## Lizenz

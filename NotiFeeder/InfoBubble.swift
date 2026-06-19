@@ -109,7 +109,7 @@ extension View {
             }
 
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color.blue.opacity(0.1))
+            .fill(UIStylePolicy.Brand.fallbackAccent.opacity(0.1))
             .frame(height: 60)
             .overlay(Text("Ein anderes Element"))
             .infoBubble(id: "settings.other.tip", alignment: .topTrailing) {

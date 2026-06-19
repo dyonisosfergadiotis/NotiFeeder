@@ -44,6 +44,8 @@ struct SettingsView: View {
     @AppStorage(UserProfileStore.displayNameKey) private var profileDisplayName: String = ""
     @AppStorage(UserProfileStore.avatarImageDataKey) private var profileAvatarData: Data = Data()
     @AppStorage("ui.cards.style.fullColor") private var fullColorCards: Bool = false
+    @AppStorage(FeedStorage.Keys.offlineRetainedFetchedArticleLimit, store: FeedStorage.defaults)
+    private var offlineRetainedFetchedArticleLimitRaw: Int = OfflineArticleRetentionLimit.defaultValue.rawValue
 
     var body: some View {
         NavigationStack {
@@ -53,7 +55,7 @@ struct SettingsView: View {
                 Section("Inhalte") {
                     SettingsNavigationRow(
                         icon: "dot.radiowaves.left.and.right",
-                        iconTint: Color.blue,
+                        iconTint: theme.uiAccentColor,
                         title: "Feeds",
                         subtitle: "\(feeds.count) gespeicherte Feeds"
                     ) {
@@ -64,12 +66,22 @@ struct SettingsView: View {
                         )
                             .environmentObject(theme)
                     }
+
+                    SettingsNavigationRow(
+                        icon: "arrow.down.circle",
+                        iconTint: theme.uiAccentColor,
+                        title: "Offline",
+                        subtitle: "Neueste: \(offlineRetentionLimit.title)"
+                    ) {
+                        OfflineStorageSettingsView()
+                            .environmentObject(theme)
+                    }
                 }
 
                 Section("Darstellung") {
                     SettingsNavigationRow(
                         icon: "paintpalette",
-                        iconTint: Color.orange,
+                        iconTint: theme.uiAccentColor,
                         title: "Karten & Layout",
                         subtitle: fullColorCards ? "Vollflächige Kacheln aktiv" : "Standard-Karten aktiv"
                     ) {
@@ -78,7 +90,7 @@ struct SettingsView: View {
 
                     SettingsNavigationRow(
                         icon: "square.grid.2x2",
-                        iconTint: Color.green,
+                        iconTint: theme.uiAccentColor,
                         title: "Widgets",
                         subtitle: "Darstellung und Inhalte"
                     ) {
@@ -90,7 +102,7 @@ struct SettingsView: View {
                 Section("App") {
                     SettingsNavigationRow(
                         icon: "info.circle",
-                        iconTint: Color.gray,
+                        iconTint: theme.uiAccentColor,
                         title: "App & Info",
                         subtitle: "Autor und Links"
                     ) {
@@ -122,6 +134,10 @@ struct SettingsView: View {
         return cleaned.isEmpty ? "Profil einrichten" : cleaned
     }
 
+    private var offlineRetentionLimit: OfflineArticleRetentionLimit {
+        OfflineArticleRetentionLimit(rawValue: offlineRetainedFetchedArticleLimitRaw) ?? .defaultValue
+    }
+
     private var profileSection: some View {
         Section {
             NavigationLink {
@@ -144,6 +160,73 @@ struct SettingsView: View {
                 .contentShape(Rectangle())
             }
         }
+    }
+}
+
+struct OfflineStorageSettingsView: View {
+    @EnvironmentObject private var theme: ThemeSettings
+    @AppStorage(FeedStorage.Keys.offlineRetainedFetchedArticleLimit, store: FeedStorage.defaults)
+    private var offlineRetainedFetchedArticleLimitRaw: Int = OfflineArticleRetentionLimit.defaultValue.rawValue
+
+    var body: some View {
+        SettingsScaffold {
+            SettingsSectionCard(title: "Offline speichern", spacing: 12) {
+                HStack(spacing: 12) {
+                    SettingsListIconBadge(systemName: "tray.and.arrow.down.fill", tint: theme.uiAccentColor)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Gefetchte Artikel")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+
+                        Text("Zusätzlich zu Ungelesenen und Lesezeichen")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 12)
+
+                    Menu {
+                        ForEach(OfflineArticleRetentionLimit.allCases) { limit in
+                            Button {
+                                offlineRetainedFetchedArticleLimitRaw = limit.rawValue
+                            } label: {
+                                HStack {
+                                    Text(limit.title)
+                                    if limit.rawValue == offlineRetainedFetchedArticleLimitRaw {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(currentOfflineRetentionLimit.title)
+                            Image(systemName: "chevron.up.chevron.down")
+                                .font(.caption2.weight(.bold))
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(theme.uiAccentColor)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 7)
+                        .background(theme.uiAccentColor.opacity(0.12), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Text("Ungelesene Artikel und Lesezeichen bleiben zusätzlich offline verfügbar. Sobald ein Artikel gelesen und nicht mehr als Lesezeichen markiert ist, zählt wieder das Limit.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .navigationTitle("Offline")
+        .navigationBarTitleDisplayMode(.inline)
+        .tint(theme.uiAccentColor)
+    }
+
+    private var currentOfflineRetentionLimit: OfflineArticleRetentionLimit {
+        OfflineArticleRetentionLimit(rawValue: offlineRetainedFetchedArticleLimitRaw) ?? .defaultValue
     }
 }
 
@@ -590,10 +673,7 @@ private struct ProfileAvatarBadge: View {
                 Circle()
                     .fill(
                         LinearGradient(
-                            colors: [
-                                Color(red: 0.20, green: 0.52, blue: 0.93),
-                                Color(red: 0.08, green: 0.27, blue: 0.52)
-                            ],
+                            colors: UIStylePolicy.Brand.iconGradientColors(),
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )

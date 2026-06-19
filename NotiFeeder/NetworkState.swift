@@ -16,7 +16,7 @@ final class NetworkState: ObservableObject {
     @Published var isOffline = false
 }
 
-nonisolated enum FeedFetchError: Error, Equatable, Sendable {
+nonisolated enum FeedFetchError: String, Error, Codable, Equatable, Sendable {
     case invalidURL
     case offline
     case timeout
@@ -40,6 +40,8 @@ nonisolated struct FeedFetchStatus: Equatable, Sendable {
 }
 
 actor FeedNetworkClient {
+    private static let maximumFeedSize = 15 * 1024 * 1024
+
     private let session: URLSession
     private let maxRetries: Int
     private let timeout: TimeInterval
@@ -88,12 +90,25 @@ actor FeedNetworkClient {
         do {
             var request = URLRequest(url: url)
             request.timeoutInterval = timeout
+            request.cachePolicy = .reloadRevalidatingCacheData
+            request.setValue(
+                "application/atom+xml, application/rss+xml, application/rdf+xml, application/xml, text/xml, */*;q=0.5",
+                forHTTPHeaderField: "Accept"
+            )
+            request.setValue(
+                "Mozilla/5.0 (compatible; NotiFeeder/1.0; iOS RSS Reader)",
+                forHTTPHeaderField: "User-Agent"
+            )
             let (data, response) = try await session.data(for: request)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 AppLogger.network.warning("Non-success status code \(http.statusCode) for URL \(url.absoluteString, privacy: .public)")
                 return .failure(.network)
             }
-            switch parseFeedData(data) {
+            guard data.count <= Self.maximumFeedSize else {
+                AppLogger.network.warning("Feed exceeded size limit for URL \(url.absoluteString, privacy: .public)")
+                return .failure(.parseError)
+            }
+            switch parseFeedData(data, baseURL: response.url ?? url) {
             case .success(let entries):
                 return .success(entries)
             case .failure(let parserError):
@@ -128,8 +143,8 @@ actor FeedNetworkClient {
         }
     }
 
-    nonisolated private func parseFeedData(_ data: Data) -> Result<[FeedEntry], RSSParserError> {
+    nonisolated private func parseFeedData(_ data: Data, baseURL: URL?) -> Result<[FeedEntry], RSSParserError> {
         let parser = RSSParser()
-        return parser.parseResult(data: data)
+        return parser.parseResult(data: data, baseURL: baseURL)
     }
 }

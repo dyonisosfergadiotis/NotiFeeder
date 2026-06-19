@@ -233,17 +233,18 @@ private struct OnboardingIntroItem: Identifiable {
 
 private struct OnboardingIntroRow: View {
     let item: OnboardingIntroItem
+    @EnvironmentObject private var theme: ThemeSettings
     
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.14))
+                    .fill(theme.uiAccentColor.opacity(0.14))
                     .frame(width: 36, height: 36)
                 Image(systemName: item.icon)
                     .font(.system(size: 16))
                     .fontWeight(.light)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(theme.uiAccentColor)
             }
             
             VStack(alignment: .leading, spacing: 3) {

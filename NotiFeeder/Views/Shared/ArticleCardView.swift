@@ -15,10 +15,15 @@ struct ArticleCardView: View {
     let isRead: Bool
     let date: Date?
     let isBookmarked: Bool
+    let isActiveArticle: Bool
     let highlightTerm: String?
     let highlightColor: Color
     let useFullColorBackground: Bool
-    @ScaledMetric(relativeTo: .headline) private var titleLineHeight: CGFloat = 20
+
+    private let titleFont = Font.system(size: 16, weight: .semibold)
+    private let summaryFont = Font.system(size: 13)
+    private let titleLineHeight: CGFloat = 19
+    private let summaryLineHeight: CGFloat = 16
 
     init(feedTitle: String,
          feedColor: Color,
@@ -29,6 +34,7 @@ struct ArticleCardView: View {
          isRead: Bool,
          date: Date?,
          isBookmarked: Bool,
+         isActiveArticle: Bool = false,
          highlightTerm: String? = nil,
          highlightColor: Color = .accentColor,
          useFullColorBackground: Bool = false) {
@@ -41,6 +47,7 @@ struct ArticleCardView: View {
         self.isRead = isRead
         self.date = date
         self.isBookmarked = isBookmarked
+        self.isActiveArticle = isActiveArticle
         self.highlightTerm = highlightTerm
         self.highlightColor = highlightColor
         self.useFullColorBackground = useFullColorBackground
@@ -55,74 +62,75 @@ struct ArticleCardView: View {
     }
 
     private var thumbnailURL: URL? {
-        guard let imageURL else { return nil }
-        let trimmed = imageURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        ArticleImagePipeline.resolvedThumbnailURL(
+            imageURL: imageURL,
+            articleLink: articleLink
+        )
+    }
 
-        if let absoluteURL = URL(string: trimmed), absoluteURL.scheme != nil {
-            return absoluteURL
-        }
-
-        guard let articleLink,
-              let articleURL = URL(string: articleLink) else {
-            return URL(string: trimmed)
-        }
-
-        return URL(string: trimmed, relativeTo: articleURL)?.absoluteURL
+    private var articleTimeText: String? {
+        guard let date, date != .distantPast else { return nil }
+        return DateFormatter.timeOnly.string(from: date)
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            HStack(alignment: .top, spacing: 12) {
-                ArticleCardThumbnailView(url: thumbnailURL,
-                                         feedColor: feedColor,
-                                         readProgress: CGFloat(readProgress))
+        HStack(alignment: .center, spacing: 12) {
+            ArticleCardThumbnailView(url: thumbnailURL,
+                                     feedColor: feedColor,
+                                     readProgress: CGFloat(readProgress))
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .top, spacing: 8) {
-                        highlightableText(for: title, baseColor: titleColor)
-                            .appTitle()
-                            .lineLimit(2)
-                            .truncationMode(.tail)
-                            .allowsTightening(true)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .multilineTextAlignment(.leading)
-                            .frame(minHeight: titleLineHeight * 2, alignment: .topLeading)
-                            .layoutPriority(1)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(feedTitle)
+                        .font(.caption)
+                        .fontWeight(isRead ? .regular : .semibold)
+                        .foregroundStyle(feedColor)
+                        .lineLimit(1)
 
-                        if isBookmarked {
-                            Spacer(minLength: 0)
-                            Image(systemName: "bookmark.fill")
-                                .font(.caption)
-                                .fontWeight(.light)
-                                .foregroundStyle(UIStylePolicy.neutralIcon)
-                        }
+                    if let articleTimeText {
+                        Text(articleTimeText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
 
-                    if hasSummary, let summary {
-                        highlightableText(for: summary, baseColor: summaryColor)
-                            .appSecondary()
-                            .lineLimit(3)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    Spacer(minLength: 0)
+
+                    if isActiveArticle {
+                        Image(systemName: "book.pages.fill")
+                            .font(.caption)
+                            .foregroundStyle(feedColor)
+                    }
+
+                    if isBookmarked {
+                        Image(systemName: "bookmark.fill")
+                            .font(.caption)
+                            .foregroundStyle(UIStylePolicy.neutralIcon)
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: 90, alignment: .leading)
+
+                highlightableText(for: title, baseColor: titleColor)
+                    .font(titleFont)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .allowsTightening(true)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
+                    .frame(minHeight: titleLineHeight * 2, alignment: .topLeading)
+                    .layoutPriority(1)
+
+                if hasSummary, let summary {
+                    highlightableText(for: summary, baseColor: summaryColor)
+                        .font(summaryFont)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity,
+                               maxHeight: summaryLineHeight * 2,
+                               alignment: .topLeading)
+                }
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                cardSurface
-            }
-            .compositingGroup()
-            .shadow(color: .black.opacity(primaryShadowOpacity),
-                    radius: primaryShadowRadius,
-                    x: 0,
-                    y: primaryShadowYOffset)
-            .shadow(color: feedColor.opacity(accentShadowOpacity),
-                    radius: accentShadowRadius,
-                    x: 0,
-                    y: accentShadowYOffset)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .onChange(of: isRead) { _, newIsRead in
             withAnimation(.easeInOut(duration: 0.24)) {
                 unreadTintProgress = newIsRead ? 0 : 1
@@ -151,152 +159,6 @@ struct ArticleCardView: View {
         return isRead ? Color.secondary.opacity(opacity) : Color.primary.opacity(opacity)
     }
 
-    private var readCardBackground: Color {
-        Color(feedColor).opacity(readBackgroundOpacity)
-    }
-
-    private var cardShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 20, style: .continuous)
-    }
-
-    @ViewBuilder
-    private var cardSurface: some View {
-        cardShape
-            .fill(cardBaseSurface)
-            .overlay { cardBaseTint }
-            .overlay { cardTintOverlay }
-            .overlay {
-                cardShape
-                    .strokeBorder(feedColor.opacity(cardBorderOpacity), lineWidth: 1)
-                    .clipped()
-            }
-            .overlay {
-                cardShape
-                    .strokeBorder(Color.primary.opacity(cardInnerStrokeOpacity), lineWidth: 1)
-            }
-    }
-
-    private var cardBaseSurface: Color {
-        colorScheme == .dark ? Color(.secondarySystemBackground) : Color(.systemBackground)
-    }
-
-    @ViewBuilder
-    private var cardBaseTint: some View {
-        if useFullColorBackground {
-            cardShape
-                .fill(Color(feedColor).opacity(currentBackgroundOpacity))
-        } else {
-            cardShape
-                .fill(readCardBackground)
-        }
-    }
-
-    private var currentBackgroundOpacity: Double {
-        interpolate(unread: unreadBackgroundOpacity, read: readBackgroundOpacity)
-    }
-
-    private var fullColorEdgeBoostOpacity: Double {
-        max(0.0, currentBackgroundOpacity - UIStylePolicy.fullColorCardInteriorOpacity)
-    }
-
-    private var fullColorEdgeTransitionWidth: CGFloat {
-        colorSchemeContrast == .increased ? 5.2 : 3.2
-    }
-
-    private var fullColorEdgeBlurRadius: CGFloat {
-        colorSchemeContrast == .increased ? 1.8 : 1.1
-    }
-
-    @ViewBuilder
-    private var cardTintOverlay: some View {
-        if !useFullColorBackground {
-            unreadTintOverlay
-        }
-    }
-
-    @ViewBuilder
-    private var fullColorEdgeOverlay: some View {
-        if fullColorEdgeBoostOpacity > 0.001 {
-            cardShape
-                .strokeBorder(Color(feedColor).opacity(fullColorEdgeBoostOpacity),
-                              lineWidth: fullColorEdgeTransitionWidth)
-                .blur(radius: fullColorEdgeBlurRadius)
-                .clipShape(cardShape)
-                .allowsHitTesting(false)
-        }
-    }
-
-    private var unreadTintOverlayOpacity: Double {
-        max(0, unreadBackgroundOpacity - readBackgroundOpacity)
-    }
-
-    @ViewBuilder
-    private var unreadTintOverlay: some View {
-        let currentOpacity = unreadTintOverlayOpacity * unreadProgress
-        if currentOpacity > 0.001 {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(feedColor).opacity(currentOpacity))
-                .allowsHitTesting(false)
-        }
-    }
-
-    private var readBackgroundOpacity: Double {
-        let contrastBoost = colorSchemeContrast == .increased ? 0.06 : 0
-        if !useFullColorBackground {
-            let lightModeBoost = colorScheme == .light ? 0.07 : 0
-            return min(1.0, UIStylePolicy.cardTintOpacityRead + contrastBoost + lightModeBoost)
-        }
-        let lightModeBoost = colorScheme == .light ? 0.06 : 0
-        return min(1.0, UIStylePolicy.fullColorCardTintOpacityRead + contrastBoost + lightModeBoost)
-    }
-
-    private var unreadBackgroundOpacity: Double {
-        let contrastBoost = colorSchemeContrast == .increased ? 0.06 : 0
-        if !useFullColorBackground {
-            let lightModeBoost = colorScheme == .light ? 0.10 : 0
-            return min(1.0, UIStylePolicy.cardTintOpacity + contrastBoost + lightModeBoost)
-        }
-        let lightModeBoost = colorScheme == .light ? 0.08 : 0
-        return min(1.0, UIStylePolicy.fullColorCardTintOpacity + contrastBoost + lightModeBoost)
-    }
-
-    private var cardBorderOpacity: Double {
-        if colorScheme == .light {
-            return interpolate(unread: 0.56, read: 0.24)
-        }
-        return interpolate(unread: UIStylePolicy.cardBorderOpacityUnread,
-                           read: UIStylePolicy.cardBorderOpacityRead)
-    }
-
-    private var cardInnerStrokeOpacity: Double {
-        let unreadOpacity = colorScheme == .light ? 0.12 : UIStylePolicy.cardInnerStrokeOpacityUnread
-        return unreadOpacity * unreadProgress
-    }
-
-    private var primaryShadowOpacity: Double {
-        interpolate(unread: 0.08, read: 0.035)
-    }
-
-    private var primaryShadowRadius: CGFloat {
-        CGFloat(interpolate(unread: 7, read: 3))
-    }
-
-    private var primaryShadowYOffset: CGFloat {
-        CGFloat(interpolate(unread: 4, read: 1.5))
-    }
-
-    private var accentShadowOpacity: Double {
-        interpolate(unread: 0.08, read: 0)
-    }
-
-    private var accentShadowRadius: CGFloat {
-        CGFloat(interpolate(unread: 7, read: 0))
-    }
-
-    private var accentShadowYOffset: CGFloat {
-        CGFloat(interpolate(unread: 3, read: 0))
-    }
-
     private var unreadProgress: Double {
         min(1.0, max(0.0, Double(unreadTintProgress)))
     }
@@ -310,15 +172,15 @@ struct ArticleCardView: View {
     }
     
     private func highlightableText(for content: String, baseColor: Color) -> Text {
-        var attributed = AttributedString(content)
-        attributed.foregroundColor = baseColor
-
         let tokens = normalizedHighlightTokens
         guard !tokens.isEmpty else {
-            return Text(attributed)
+            return Text(content).foregroundColor(baseColor)
         }
 
         let ranges = mergedHighlightRanges(in: content, tokens: tokens)
+        var attributed = AttributedString(content)
+        attributed.foregroundColor = baseColor
+
         guard !ranges.isEmpty else {
             return Text(attributed)
         }
@@ -373,7 +235,16 @@ private struct ArticleCardThumbnailView: View {
     let readProgress: CGFloat
     @Environment(\.displayScale) private var displayScale
     @State private var loadedImage: UIImage?
-    @State private var isLoading = false
+    @State private var loadedImageURL: URL?
+
+    init(url: URL?, feedColor: Color, readProgress: CGFloat) {
+        self.url = url
+        self.feedColor = feedColor
+        self.readProgress = readProgress
+        let cachedImage = url.flatMap { ArticleImagePipeline.shared.cachedImage(for: $0) }
+        _loadedImage = State(initialValue: cachedImage)
+        _loadedImageURL = State(initialValue: cachedImage == nil ? nil : url)
+    }
 
     var body: some View {
         Group {
@@ -382,56 +253,56 @@ private struct ArticleCardThumbnailView: View {
                     .resizable()
                     .scaledToFill()
             } else {
-                thumbnailPlaceholder(showsLoadingStyle: isLoading)
+                thumbnailPlaceholder
             }
         }
-        .frame(width: 90, height: 90)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .frame(width: 76, height: 76)
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(feedColor.opacity(interpolate(unread: 0.38, read: 0.22)), lineWidth: 1)
         )
-        .compositingGroup()
-        .shadow(color: .black.opacity(interpolate(unread: 0.09, read: 0.045)),
-                radius: interpolateCGFloat(unread: 7, read: 3),
-                x: 0,
-                y: interpolateCGFloat(unread: 3, read: 1))
-        .shadow(color: feedColor.opacity(interpolate(unread: 0.10, read: 0)),
-                radius: interpolateCGFloat(unread: 7, read: 0),
-                x: 0,
-                y: interpolateCGFloat(unread: 3, read: 0))
-        .task(id: url) {
+        .task(id: url, priority: .userInitiated) {
             guard let url else {
                 loadedImage = nil
-                isLoading = false
+                loadedImageURL = nil
+                return
+            }
+
+            if loadedImageURL == url, loadedImage != nil {
+                return
+            }
+            if let cachedImage = ArticleImagePipeline.shared.cachedImage(for: url) {
+                loadedImage = cachedImage
+                loadedImageURL = url
+                return
+            }
+            guard !ArticleImagePipeline.shared.isTemporarilyMissing(url) else {
                 return
             }
 
             loadedImage = nil
-            let effectiveURL = OfflineArticleArchive.cachedAssetFileURL(for: url) ?? url
-            if !effectiveURL.isFileURL {
-                try? await Task.sleep(nanoseconds: 180_000_000)
-                guard !Task.isCancelled else { return }
-            }
-
-            isLoading = true
-            defer { isLoading = false }
-            let maxPixelSize = max(140, 90 * displayScale * 2)
-            let image = await ArticleImagePipeline.shared.image(for: effectiveURL, maxPixelSize: maxPixelSize)
+            loadedImageURL = nil
+            let maxPixelSize = max(120, 76 * displayScale)
+            let image = await ArticleImagePipeline.shared.thumbnailImage(
+                for: url,
+                maxPixelSize: maxPixelSize,
+                priority: .userInitiated
+            )
             guard !Task.isCancelled else { return }
             loadedImage = image
+            loadedImageURL = image == nil ? nil : url
         }
     }
 
-    @ViewBuilder
-    private func thumbnailPlaceholder(showsLoadingStyle: Bool) -> some View {
+    private var thumbnailPlaceholder: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(feedColor.opacity(showsLoadingStyle ? 0.16 : 0.12))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(feedColor.opacity(0.12))
             Image(systemName: "photo")
                 .font(.system(size: 18))
                 .fontWeight(.light)
-                .foregroundStyle(feedColor.opacity(showsLoadingStyle ? 1.0 : 0.9))
+                .foregroundStyle(feedColor.opacity(0.9))
         }
     }
 
@@ -440,8 +311,4 @@ private struct ArticleCardThumbnailView: View {
         return unread + (read - unread) * clampedReadProgress
     }
 
-    private func interpolateCGFloat(unread: CGFloat, read: CGFloat) -> CGFloat {
-        let clampedReadProgress = min(1.0, max(0.0, readProgress))
-        return unread + (read - unread) * clampedReadProgress
-    }
 }

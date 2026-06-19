@@ -13,7 +13,6 @@
 		E59E77312F865901006A872F /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E59D296D2F30B4C000099C61 /* WidgetKit.framework */; };
 		E59E77322F865901006A872F /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E59D296F2F30B4C000099C61 /* SwiftUI.framework */; };
 		E59E77412F865902006A872F /* NotiFeeder WidgetExtension AWExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E59E77302F865901006A872F /* NotiFeeder WidgetExtension AWExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		E5F1432E2FCC658200D7043B /* FabBar in Frameworks */ = {isa = PBXBuildFile; productRef = E5F1432D2FCC658200D7043B /* FabBar */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -139,7 +138,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E5F1432E2FCC658200D7043B /* FabBar in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -229,7 +227,6 @@
 			);
 			name = NotiFeeder;
 			packageProductDependencies = (
-				E5F1432D2FCC658200D7043B /* FabBar */,
 			);
 			productName = NotiFeeder;
 			productReference = E54E5A902EBA259A00BD1671 /* NotiFeeder.app */;
@@ -343,7 +340,6 @@
 			mainGroup = E54E5A872EBA259A00BD1671;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				E5F1432C2FCC658200D7043B /* XCRemoteSwiftPackageReference "FabBar" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E54E5A912EBA259A00BD1671 /* Products */;
@@ -884,25 +880,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		E5F1432C2FCC658200D7043B /* XCRemoteSwiftPackageReference "FabBar" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ryanashcraft/FabBar.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.1.0;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		E5F1432D2FCC658200D7043B /* FabBar */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E5F1432C2FCC658200D7043B /* XCRemoteSwiftPackageReference "FabBar" */;
-			productName = FabBar;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E54E5A882EBA259A00BD1671 /* Project object */;
 }

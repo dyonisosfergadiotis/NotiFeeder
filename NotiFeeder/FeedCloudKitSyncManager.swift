@@ -23,8 +23,18 @@ final class FeedCloudKitSyncManager {
 
     private let containerIdentifier = "iCloud.de.DyonisosFergadiotis.NotiFeeder"
     private let recordType = "FeedBlob"
-    private let database: CKDatabase
+    private let injectedContainer: CKContainer?
     private let defaults: UserDefaults
+    private lazy var database: CKDatabase? = {
+        if let injectedContainer {
+            return injectedContainer.privateCloudDatabase
+        }
+        #if targetEnvironment(simulator)
+        return nil
+        #else
+        return CKContainer(identifier: containerIdentifier).privateCloudDatabase
+        #endif
+    }()
     private var didConfigure = false
     private var uploadTasks: [String: Task<Void, Never>] = [:]
     private var localMutationDatesByKey: [String: Date] = [:]
@@ -45,8 +55,7 @@ final class FeedCloudKitSyncManager {
     ]
 
     init(container: CKContainer? = nil, defaults: UserDefaults? = nil) {
-        let resolvedContainer = container ?? CKContainer(identifier: containerIdentifier)
-        self.database = resolvedContainer.privateCloudDatabase
+        self.injectedContainer = container
         self.defaults = defaults ?? FeedStorage.defaults
     }
 
@@ -59,6 +68,7 @@ final class FeedCloudKitSyncManager {
     func configureIfNeeded() {
         guard !didConfigure else { return }
         didConfigure = true
+        guard database != nil else { return }
         Task { @MainActor in
             await flushPendingUploadsIfPossible()
             await syncAllFromCloudIfPossible()
@@ -71,7 +81,7 @@ final class FeedCloudKitSyncManager {
     }
 
     func uploadLocalData(_ data: Data, token: Double, for key: String) {
-        guard syncKeys.contains(key) else { return }
+        guard database != nil, syncKeys.contains(key) else { return }
         noteLocalMutation(for: key)
         markUploadPending(for: key)
         uploadTasks[key]?.cancel()
@@ -89,6 +99,7 @@ final class FeedCloudKitSyncManager {
     }
 
     func syncAllFromCloudIfPossible() async {
+        guard database != nil else { return }
         await flushPendingUploadsIfPossible()
         for key in syncKeys {
             await syncDataFromCloudIfNeeded(for: key)
@@ -96,7 +107,7 @@ final class FeedCloudKitSyncManager {
     }
 
     func syncDataFromCloudIfNeeded(for key: String) async {
-        guard syncKeys.contains(key) else { return }
+        guard database != nil, syncKeys.contains(key) else { return }
 
         let localData = FeedCacheSync.bestAvailableData(for: key)
         let localToken = FeedCacheSync.bestAvailableToken(for: key)
@@ -159,6 +170,7 @@ final class FeedCloudKitSyncManager {
     }
 
     func flushPendingUploadsIfPossible() async {
+        guard database != nil else { return }
         let keys = pendingUploadKeys()
         guard !keys.isEmpty else { return }
 
@@ -176,6 +188,7 @@ final class FeedCloudKitSyncManager {
     }
 
     private func upload(_ data: Data, token: Double, for key: String) async -> Double? {
+        guard let database else { return nil }
         do {
             let existingRecord = try await fetchRecordIfAvailable(for: key)
             let currentRemoteToken = (existingRecord?[Field.token] as? NSNumber)?.doubleValue ?? 0
@@ -226,6 +239,7 @@ final class FeedCloudKitSyncManager {
     }
 
     private func fetchRecordIfAvailable(for key: String) async throws -> CKRecord? {
+        guard let database else { return nil }
         do {
             return try await database.record(for: recordID(for: key))
         } catch let error as CKError where error.code == .unknownItem {

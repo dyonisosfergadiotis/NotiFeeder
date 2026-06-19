@@ -28,6 +28,23 @@ nonisolated extension DateFormatter {
         return formatter
     }()
 
+    static let feedDateFallbacks: [DateFormatter] = {
+        [
+            "EEE, d MMM yyyy HH:mm:ss Z",
+            "EEE, dd MMM yyyy HH:mm Z",
+            "d MMM yyyy HH:mm:ss Z",
+            "yyyy-MM-dd HH:mm:ss Z",
+            "yyyy-MM-dd"
+        ].map { format in
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = format
+            formatter.isLenient = true
+            return formatter
+        }
+    }()
+
     static let localized: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = germanLocale
@@ -153,7 +170,16 @@ nonisolated struct DateParser {
             return parsed
         }
 
-        // 4) Fallback
+        // 4) Common relaxed feed variants (missing weekday/seconds or numeric timezone).
+        for formatter in DateFormatter.feedDateFallbacks {
+            if let d = formatter.date(from: s) {
+                parsed = d
+                parseCache.setObject(parsed as NSDate, forKey: cacheKey)
+                return parsed
+            }
+        }
+
+        // 5) Fallback
         AppLogger.parsing.warning("Date parsing failed for input: \(s, privacy: .public)")
         parsed = Date.distantPast
         parseCache.setObject(parsed as NSDate, forKey: cacheKey)

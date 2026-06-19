@@ -2,12 +2,75 @@ import Foundation
 import CryptoKit
 import OSLog
 
+nonisolated private final class OfflineAssetFileURLCache: @unchecked Sendable {
+    private let paths = NSCache<NSURL, NSURL>()
+    private let existingFiles = NSCache<NSURL, NSURL>()
+    private let lock = NSLock()
+    private var missingUntil: [NSURL: Date] = [:]
+
+    func fileURL(for remoteURL: URL) -> URL? {
+        paths.object(forKey: remoteURL as NSURL) as URL?
+    }
+
+    func existingFileURL(for remoteURL: URL) -> URL? {
+        existingFiles.object(forKey: remoteURL as NSURL) as URL?
+    }
+
+    func isTemporarilyMissing(_ remoteURL: URL, now: Date = Date()) -> Bool {
+        let key = remoteURL as NSURL
+        return lock.withLock {
+            guard let deadline = missingUntil[key] else { return false }
+            if deadline > now {
+                return true
+            }
+            missingUntil[key] = nil
+            return false
+        }
+    }
+
+    func storePath(_ fileURL: URL, for remoteURL: URL) {
+        paths.setObject(fileURL as NSURL, forKey: remoteURL as NSURL)
+    }
+
+    func storeExistingFile(_ fileURL: URL, for remoteURL: URL) {
+        let key = remoteURL as NSURL
+        paths.setObject(fileURL as NSURL, forKey: key)
+        existingFiles.setObject(fileURL as NSURL, forKey: key)
+        lock.withLock {
+            missingUntil[key] = nil
+        }
+    }
+
+    func recordMissing(_ remoteURL: URL, duration: TimeInterval) {
+        let key = remoteURL as NSURL
+        lock.withLock {
+            missingUntil[key] = Date().addingTimeInterval(duration)
+        }
+    }
+}
+
 enum OfflineArticleArchive {
     nonisolated static let preloader = OfflineArticlePreloader()
 
     nonisolated private static let archiveDirectoryName = "OfflineArticleArchive"
     nonisolated private static let assetsDirectoryName = "assets"
     nonisolated private static let articlesDirectoryName = "articles"
+    nonisolated private static let cachedRootDirectoryURL: URL? = createDirectory(
+        named: archiveDirectoryName,
+        below: FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first
+    )
+    nonisolated private static let cachedAssetsDirectoryURL: URL? = createDirectory(
+        named: assetsDirectoryName,
+        below: cachedRootDirectoryURL
+    )
+    nonisolated private static let cachedArticlesDirectoryURL: URL? = createDirectory(
+        named: articlesDirectoryName,
+        below: cachedRootDirectoryURL
+    )
+    nonisolated private static let assetFileURLCache = OfflineAssetFileURLCache()
     nonisolated private static let mediaAttributeRegex = try? NSRegularExpression(
         pattern: #"(?i)\b(src|poster)\s*=\s*(["'])([^"']+)\2"#,
         options: []
@@ -37,10 +100,19 @@ enum OfflineArticleArchive {
             return FileManager.default.fileExists(atPath: remoteURL.path) ? remoteURL : nil
         }
 
-        guard let fileURL = assetFileURL(for: remoteURL),
-              FileManager.default.fileExists(atPath: fileURL.path) else {
+        if let cachedURL = assetFileURLCache.existingFileURL(for: remoteURL) {
+            return cachedURL
+        }
+        guard !assetFileURLCache.isTemporarilyMissing(remoteURL),
+              let fileURL = assetFileURL(for: remoteURL) else {
             return nil
         }
+
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            assetFileURLCache.recordMissing(remoteURL, duration: 5)
+            return nil
+        }
+        assetFileURLCache.storeExistingFile(fileURL, for: remoteURL)
         return fileURL
     }
 
@@ -63,6 +135,15 @@ enum OfflineArticleArchive {
             AppLogger.persistence.warning("Failed to prepare offline article HTML for \(articleLink, privacy: .public)")
             return nil
         }
+    }
+
+    @discardableResult
+    nonisolated static func prepareOfflineHTMLDocument(for entry: FeedEntry) -> URL? {
+        prepareOfflineHTMLDocument(
+            forArticleLink: entry.link,
+            articleURL: URL(string: entry.link),
+            htmlDocument: offlineHTMLDocument(for: entry)
+        )
     }
 
     nonisolated static func mediaURLs(for entry: FeedEntry) -> [URL] {
@@ -95,46 +176,68 @@ enum OfflineArticleArchive {
 
     nonisolated fileprivate static func assetFileURL(for remoteURL: URL) -> URL? {
         guard let assetsDirectoryURL else { return nil }
-        return assetsDirectoryURL.appendingPathComponent(assetFileName(for: remoteURL))
+        if let cached = assetFileURLCache.fileURL(for: remoteURL) {
+            return cached
+        }
+
+        let fileURL = assetsDirectoryURL.appendingPathComponent(assetFileName(for: remoteURL))
+        assetFileURLCache.storePath(fileURL, for: remoteURL)
+        return fileURL
     }
 
     nonisolated private static var rootDirectoryURL: URL? {
-        guard let applicationSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return nil
-        }
-
-        let url = applicationSupportURL.appendingPathComponent(archiveDirectoryName, isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            return url
-        } catch {
-            AppLogger.persistence.warning("Failed to create offline archive root directory")
-            return nil
-        }
+        cachedRootDirectoryURL
     }
 
     nonisolated private static var assetsDirectoryURL: URL? {
-        guard let rootDirectoryURL else { return nil }
-        let url = rootDirectoryURL.appendingPathComponent(assetsDirectoryName, isDirectory: true)
+        cachedAssetsDirectoryURL
+    }
+
+    nonisolated private static var articlesDirectoryURL: URL? {
+        cachedArticlesDirectoryURL
+    }
+
+    nonisolated private static func createDirectory(named name: String, below parent: URL?) -> URL? {
+        guard let parent else { return nil }
+        let url = parent.appendingPathComponent(name, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             return url
         } catch {
-            AppLogger.persistence.warning("Failed to create offline asset directory")
+            AppLogger.persistence.warning("Failed to create offline archive directory \(name, privacy: .public)")
             return nil
         }
     }
 
-    nonisolated private static var articlesDirectoryURL: URL? {
-        guard let rootDirectoryURL else { return nil }
-        let url = rootDirectoryURL.appendingPathComponent(articlesDirectoryName, isDirectory: true)
-        do {
-            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-            return url
-        } catch {
-            AppLogger.persistence.warning("Failed to create offline article directory")
-            return nil
-        }
+    nonisolated private static func offlineHTMLDocument(for entry: FeedEntry) -> String {
+        let title = escapedHTML(entry.displayTitle)
+        let bodySource = entry.contentRaw?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = (bodySource?.isEmpty == false) ? bodySource! : "<p>\(escapedHTML(entry.content))</p>"
+        return """
+        <!doctype html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>\(title)</title>
+        </head>
+        <body>
+        <article>
+        <h1>\(title)</h1>
+        \(body)
+        </article>
+        </body>
+        </html>
+        """
+    }
+
+    nonisolated private static func escapedHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
     }
 
     nonisolated private static func stableHash(for value: String) -> String {
@@ -393,6 +496,106 @@ enum OfflineArticleArchive {
     }
 }
 
+nonisolated enum OfflineArticleRetentionLimit: Int, CaseIterable, Identifiable {
+    case ten = 10
+    case twentyFive = 25
+    case fifty = 50
+    case hundred = 100
+    case allNewest = -1
+
+    static let defaultValue = OfflineArticleRetentionLimit.fifty
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .ten:
+            return "10"
+        case .twentyFive:
+            return "25"
+        case .fifty:
+            return "50"
+        case .hundred:
+            return "100"
+        case .allNewest:
+            return "Alle neuesten"
+        }
+    }
+
+    var articleLimit: Int? {
+        switch self {
+        case .allNewest:
+            return nil
+        case .ten, .twentyFive, .fifty, .hundred:
+            return rawValue
+        }
+    }
+
+    static func storedValue(in defaults: UserDefaults = FeedStorage.defaults) -> OfflineArticleRetentionLimit {
+        let rawValue = defaults.integer(forKey: FeedStorage.Keys.offlineRetainedFetchedArticleLimit)
+        return OfflineArticleRetentionLimit(rawValue: rawValue) ?? defaultValue
+    }
+}
+
+nonisolated enum OfflineArticleRetentionPolicy {
+    static func retainedEntries(
+        from entries: [FeedEntry],
+        readIDs: Set<String>,
+        bookmarkedLinks: Set<String>,
+        limit: OfflineArticleRetentionLimit = .storedValue()
+    ) -> [FeedEntry] {
+        let newestEntries = deduplicated(entries).sorted { lhs, rhs in
+            let lhsDate = DateParser.parse(lhs.pubDateString)
+            let rhsDate = DateParser.parse(rhs.pubDateString)
+            if lhsDate != rhsDate {
+                return lhsDate > rhsDate
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
+
+        guard let regularLimit = limit.articleLimit else {
+            return newestEntries
+        }
+
+        var retained: [FeedEntry] = []
+        retained.reserveCapacity(newestEntries.count)
+        var retainedLinks: Set<String> = []
+
+        for entry in newestEntries where isProtected(entry, readIDs: readIDs, bookmarkedLinks: bookmarkedLinks) {
+            if retainedLinks.insert(entry.link).inserted {
+                retained.append(entry)
+            }
+        }
+
+        var regularCount = 0
+        for entry in newestEntries where !isProtected(entry, readIDs: readIDs, bookmarkedLinks: bookmarkedLinks) {
+            guard regularCount < regularLimit else { break }
+            if retainedLinks.insert(entry.link).inserted {
+                retained.append(entry)
+                regularCount += 1
+            }
+        }
+
+        return retained
+    }
+
+    private static func isProtected(_ entry: FeedEntry, readIDs: Set<String>, bookmarkedLinks: Set<String>) -> Bool {
+        bookmarkedLinks.contains(entry.link) || !readIDs.contains(entry.link)
+    }
+
+    private static func deduplicated(_ entries: [FeedEntry]) -> [FeedEntry] {
+        var seen: Set<String> = []
+        var result: [FeedEntry] = []
+        result.reserveCapacity(entries.count)
+
+        for entry in entries where seen.insert(entry.link).inserted {
+            result.append(entry)
+        }
+
+        return result
+    }
+}
+
 actor OfflineArticlePreloader {
     private let session: URLSession
     private let maxConcurrentDownloads = 6
@@ -409,6 +612,10 @@ actor OfflineArticlePreloader {
     }
 
     func preload(entries: [FeedEntry]) async {
+        for entry in entries {
+            OfflineArticleArchive.prepareOfflineHTMLDocument(for: entry)
+        }
+
         let uniqueAssetURLs = OfflineArticleArchive.uniqueMediaURLs(for: entries)
         let validAssetKeys = Set(uniqueAssetURLs.map(OfflineArticleArchive.assetStorageKey(for:)))
         let validArticleKeys = Set(entries.map { OfflineArticleArchive.articleStorageFileName(for: $0.link) + ".html" })

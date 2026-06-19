@@ -7,8 +7,8 @@ import UIKit
 // Version 1.2 features: What's New splash + a few inline info bubbles
 
 final class ThemeSettings: ObservableObject {
-    private static let darkModeSkyBlueHex = "#7CC4FF"
-    private static let lightModeSkyBlueHex = "#2F7FD6"
+    private static let darkModeBrandHex = UIStylePolicy.Brand.appIconLightHex
+    private static let lightModeBrandHex = UIStylePolicy.Brand.appIconDeepHex
 
     private enum Keys {
         static let feedColorMap = FeedStorage.Keys.feedColorMap
@@ -18,7 +18,7 @@ final class ThemeSettings: ObservableObject {
     private static let appGroupSuite = AppGroupDefaults.suiteName
 
     /// Fixed app accent tone used for persistence and widget fallback.
-    @Published private(set) var uiAccentHex: String = ThemeSettings.lightModeSkyBlueHex
+    @Published private(set) var uiAccentHex: String = ThemeSettings.lightModeBrandHex
 
     private let defaults: UserDefaults
     private(set) var decoder = JSONDecoder()
@@ -31,7 +31,7 @@ final class ThemeSettings: ObservableObject {
         self.defaults = userDefaults
         observeCloudSync()
         loadFeedColors()
-        self.uiAccentHex = Self.lightModeSkyBlueHex
+        self.uiAccentHex = Self.lightModeBrandHex
         syncAccentToAppGroup()
     }
 
@@ -45,11 +45,11 @@ final class ThemeSettings: ObservableObject {
         #if canImport(UIKit)
         Color(UIColor { trait in
             trait.userInterfaceStyle == .dark
-            ? UIColor(Color.fromHex(Self.darkModeSkyBlueHex))
-            : UIColor(Color.fromHex(Self.lightModeSkyBlueHex))
+            ? UIColor(Color.fromHex(Self.darkModeBrandHex))
+            : UIColor(Color.fromHex(Self.lightModeBrandHex))
         })
         #else
-        Color.fromHex(Self.lightModeSkyBlueHex)
+        Color.fromHex(Self.lightModeBrandHex)
         #endif
     }
     
@@ -136,8 +136,8 @@ final class ThemeSettings: ObservableObject {
 
     private func syncAccentToAppGroup() {
         let group = appGroupDefaults
-        if group.string(forKey: Keys.uiAccentHex) != Self.lightModeSkyBlueHex {
-            group.set(Self.lightModeSkyBlueHex, forKey: Keys.uiAccentHex)
+        if group.string(forKey: Keys.uiAccentHex) != Self.lightModeBrandHex {
+            group.set(Self.lightModeBrandHex, forKey: Keys.uiAccentHex)
         }
     }
 

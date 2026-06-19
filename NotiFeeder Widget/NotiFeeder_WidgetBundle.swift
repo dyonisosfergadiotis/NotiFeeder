@@ -16,5 +16,8 @@ struct NotiFeeder_WidgetBundle: WidgetBundle {
         NotiFeeder_Widget_Large()
         NotiFeeder_Widget_LockScreenRectangular()
         NotiFeeder_WidgetControl()
+        if #available(iOS 16.2, *) {
+            ReadingLiveActivityWidget()
+        }
     }
 }

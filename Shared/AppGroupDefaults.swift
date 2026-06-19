@@ -1,6 +1,6 @@
 import Foundation
 
-enum AppGroupDefaults {
+nonisolated enum AppGroupDefaults {
     static let suiteName = "group.notiFeeder"
 
     static func defaults(suiteName: String = AppGroupDefaults.suiteName, fallback: UserDefaults = .standard) -> UserDefaults {
@@ -11,7 +11,7 @@ enum AppGroupDefaults {
     }
 }
 
-enum AppGroupBlobStore {
+nonisolated enum AppGroupBlobStore {
     private static let directoryName = "LargePreferenceValues"
     private static let fileExtension = "data"
 

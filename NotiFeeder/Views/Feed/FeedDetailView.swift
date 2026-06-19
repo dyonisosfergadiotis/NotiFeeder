@@ -5,34 +5,66 @@ import FoundationModels
 import SwiftData
 import UIKit
 import CryptoKit
+import Observation
 
 extension Color {
     var rgbComponents: (red: Int, green: Int, blue: Int)? {
-        #if canImport(UIKit)
-        typealias NativeColor = UIColor
-        #elseif canImport(AppKit)
-        typealias NativeColor = NSColor
-        #endif
-
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
         var alpha: CGFloat = 0
 
-        guard NativeColor(self).getRed(&red, green: &green, blue: &blue, alpha: &alpha) else {
-            return nil
+        let resolvedColor = UIColor(self).resolvedColor(with: UITraitCollection.current)
+        if !resolvedColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha) {
+            let components = resolvedColor.cgColor.components ?? []
+            switch components.count {
+            case 2:
+                red = components[0]
+                green = components[0]
+                blue = components[0]
+            case 3, 4:
+                red = components[0]
+                green = components[1]
+                blue = components[2]
+            default:
+                return nil
+            }
         }
 
-        return (Int(red * 255), Int(green * 255), Int(blue * 255))
+        return (
+            Int((red * 255).rounded()),
+            Int((green * 255).rounded()),
+            Int((blue * 255).rounded())
+        )
     }
 }
 
 private enum FeedDetailLayout {
-    static let expandedHeaderHeight: CGFloat = 92
+    static let expandedHeaderHeight: CGFloat = 128
     static let headerCollapseOffset: CGFloat = 40
-    static let compactToolbarSpacing: CGFloat = 6
-    static let compactToolbarHorizontalPadding: CGFloat = 2
+    static let headerMetadataHeight: CGFloat = 18
+    static let headerDateHeight: CGFloat = 16
+    static let navigationBarHeight: CGFloat = 64
+    static let navigationRevealDistance: CGFloat = 0.48
+    static let readingProgressFadeStart: CGFloat = 0.68
+    static let readingProgressFadeDistance: CGFloat = 0.22
+    static let compactPresentationSingleLineHeight: CGFloat = 78
+    static let compactPresentationDoubleLineHeight: CGFloat = 96
+    static let presentationTransitionDistance: CGFloat = 180
+    static let compactHorizontalInset: CGFloat = 20
+    static let compactTopInset: CGFloat = 17
+    static let compactBottomInset: CGFloat = 12
     static let compactToolbarHitTarget: CGFloat = 40
+    static let headerCollapseRange: CGFloat = 150
+
+    static func clampedProgress(_ value: CGFloat) -> CGFloat {
+        min(1, max(0, value))
+    }
+
+    static func smoothstep(_ value: CGFloat) -> CGFloat {
+        let t = clampedProgress(value)
+        return t * t * (3 - 2 * t)
+    }
 }
 
 private struct FeedDetailHeaderHeightKey: PreferenceKey {
@@ -43,7 +75,173 @@ private struct FeedDetailHeaderHeightKey: PreferenceKey {
     }
 }
 
+private struct FeedDetailHeaderTitleHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+@Observable
+private final class FeedDetailScrollState {
+    var collapseProgress: CGFloat = 0
+    var readingProgress: CGFloat = 0
+
+    func reset() {
+        collapseProgress = 0
+        readingProgress = 0
+    }
+}
+
+private struct FeedDetailCompactProgressBar: View {
+    let scrollState: FeedDetailScrollState
+    let tint: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.09))
+                Capsule()
+                    .fill(tint)
+                    .frame(
+                        width: proxy.size.width
+                            * FeedDetailLayout.clampedProgress(scrollState.readingProgress)
+                    )
+            }
+        }
+        .frame(height: 3.5)
+        .padding(.top, 4)
+        .accessibilityElement()
+        .accessibilityLabel("Lesefortschritt")
+        .accessibilityValue("\(Int(scrollState.readingProgress * 100)) Prozent")
+    }
+}
+
+private struct FeedDetailCollapsingNavigationBar: View {
+    let title: String
+    let tint: Color
+    let isSummaryMode: Bool
+    let scrollState: FeedDetailScrollState
+
+    private var revealProgress: CGFloat {
+        let collapseProgress = isSummaryMode ? 0 : scrollState.collapseProgress
+        return FeedDetailLayout.smoothstep(
+            collapseProgress / FeedDetailLayout.navigationRevealDistance
+        )
+    }
+
+    var body: some View {
+        Text(title)
+            .font(.headline)
+            .foregroundStyle(.primary)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .truncationMode(.tail)
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity)
+            .frame(height: FeedDetailLayout.navigationBarHeight)
+            .background(tint)
+            .overlay(alignment: .bottom) {
+                Divider()
+                    .opacity(0.35)
+            }
+            .offset(
+                y: -FeedDetailLayout.navigationBarHeight
+                    * (1 - revealProgress)
+            )
+            .opacity(revealProgress)
+            .allowsHitTesting(false)
+            .zIndex(3)
+    }
+}
+
+private struct FeedDetailCollapsingHeader<Content: View>: View {
+    let scrollState: FeedDetailScrollState
+    let isSummaryMode: Bool
+    let headerHeight: CGFloat
+    let content: Content
+
+    init(
+        scrollState: FeedDetailScrollState,
+        isSummaryMode: Bool,
+        headerHeight: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.scrollState = scrollState
+        self.isSummaryMode = isSummaryMode
+        self.headerHeight = headerHeight
+        self.content = content()
+    }
+
+    private var visibleCollapseProgress: CGFloat {
+        isSummaryMode ? 0 : scrollState.collapseProgress
+    }
+
+    var body: some View {
+        content
+            .offset(y: -headerHeight * visibleCollapseProgress)
+            .zIndex(2)
+    }
+}
+
+private struct FeedDetailReadingProgressLayer: View {
+    let scrollState: FeedDetailScrollState
+    let tint: Color
+    let isSummaryMode: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let fullWidth = proxy.size.width
+            let barHeight: CGFloat = 2
+            let visibleCollapseProgress = isSummaryMode
+                ? 0
+                : scrollState.collapseProgress
+            let progressOpacity = FeedDetailLayout.smoothstep(
+                (visibleCollapseProgress - FeedDetailLayout.readingProgressFadeStart)
+                    / FeedDetailLayout.readingProgressFadeDistance
+            )
+
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.1))
+                    .frame(width: fullWidth, height: barHeight)
+                Rectangle()
+                    .fill(tint)
+                    .frame(
+                        width: fullWidth
+                            * FeedDetailLayout.clampedProgress(scrollState.readingProgress),
+                        height: barHeight
+                    )
+            }
+            .opacity(progressOpacity)
+            .offset(y: FeedDetailLayout.navigationBarHeight)
+        }
+        .opacity(isSummaryMode ? 0 : 1)
+        .allowsHitTesting(false)
+        .zIndex(4)
+    }
+}
+
 struct FeedDetailView: View {
+    static func compactPresentationHeight(for title: String, availableWidth: CGFloat) -> CGFloat {
+        let font = UIFont.preferredFont(forTextStyle: .subheadline)
+        let measuredHeight = (title as NSString).boundingRect(
+            with: CGSize(width: max(1, availableWidth), height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        ).height
+        return measuredHeight > font.lineHeight * 1.35
+            ? FeedDetailLayout.compactPresentationDoubleLineHeight
+            : FeedDetailLayout.compactPresentationSingleLineHeight
+    }
+
+    static func compactPresentationDetent(height: CGFloat) -> PresentationDetent {
+        .height(height)
+    }
+
     private static let imageTagRegex: NSRegularExpression? = {
         try? NSRegularExpression(pattern: "<img\\b", options: [.caseInsensitive])
     }()
@@ -61,6 +259,12 @@ struct FeedDetailView: View {
         cache.countLimit = 512
         return cache
     }()
+    private static let formattedHTMLCache: NSCache<NSString, NSString> = {
+        let cache = NSCache<NSString, NSString>()
+        cache.countLimit = 64
+        cache.totalCostLimit = 24 * 1_024 * 1_024
+        return cache
+    }()
 
     var entry: FeedEntry
     var feedColor: Color?
@@ -70,6 +274,12 @@ struct FeedDetailView: View {
     var onToggleRead: ((Bool) -> Void)? = nil
     /// Optional callback invoked when bookmark state changes in this detail view.
     var onToggleBookmark: ((Bool) -> Void)? = nil
+    var isCompactPresentation: Bool = false
+    var compactPresentationHeight: CGFloat = FeedDetailLayout.compactPresentationDoubleLineHeight
+    var onExpandPresentation: () -> Void = {}
+    var onMinimizePresentation: () -> Void = {}
+    var onClosePresentation: () -> Void = {}
+    var onReadingProgressChange: (CGFloat) -> Void = { _ in }
 
     enum NavigationDirection {
         case previous
@@ -81,59 +291,84 @@ struct FeedDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.colorScheme) private var colorScheme
     
-    // --- UNIFIED COLLAPSE BEHAVIOR FOR TOOLBARS (scroll drives collapse; taps expand sides) ---
-    @State private var collapseProgress: CGFloat = 0
-    @State private var isLeftBarExpanded = true
-    @State private var isRightBarExpanded = true
-    @State private var bothExpanded = true
-    @State private var readingProgress: CGFloat = 0
+    @State private var scrollState = FeedDetailScrollState()
     @State private var headerHeight: CGFloat = FeedDetailLayout.expandedHeaderHeight
-
+    @State private var isHeaderTitleSingleLine = false
     @State private var webView: WKWebView = {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = .all
         let wv = WKWebView(frame: .zero, configuration: config)
+        wv.isOpaque = false
+        wv.backgroundColor = .clear
+        wv.scrollView.backgroundColor = .clear
         wv.scrollView.showsVerticalScrollIndicator = false
         wv.scrollView.showsHorizontalScrollIndicator = false
         return wv
     }()
     
     @State private var activeSheet: ActiveSheet?
+    @State private var isSummaryMode = false
+    @State private var isSummaryGenerating = false
+    @State private var showsAppleAILabel = false
+    @State private var appleAILabelRequestID = 0
+    @State private var summaryRainbowRevealProgress: CGFloat = 0
+    @State private var summaryRainbowCompletionProgress: CGFloat = 0
+    @State private var summaryContentVisibility: Double = 0
+    @State private var articleCollapseProgressBeforeSummary: CGFloat = 0
+    @State private var summaryDismissRequestID = 0
+    @State private var summaryRegenerationRequestID = 0
+    @State private var summarySharePayload: String?
+    @State private var isSummaryDismissAnimating = false
     @State private var isReadLocal: Bool = false
     @State private var isBookmarked: Bool = false
     @State private var pendingNavigationDirection: NavigationDirection?
     @State private var contentOffset: CGFloat = 0
     @State private var contentOpacity: Double = 1
     @State private var hasAppeared = false
+    @State private var measuredPresentationExpansion: CGFloat = 1
+    @State private var lastLiveActivityProgressUpdateTime: TimeInterval = 0
+    @State private var lastLiveActivityProgressValue: CGFloat = -1
     @AppStorage("readerFontScale") private var readerFontScale: Double = 1.0
     @AppStorage("readerFontFamily") private var readerFontFamily: String = ReaderFontFamily.rounded.rawValue
     @AppStorage("readerLineSpacing") private var readerLineSpacing: Double = 1.4
     @AppStorage("readerTextAlignment") private var readerTextAlignmentRaw: String = "left"
+    @AppStorage("readerParagraphSpacing") private var readerParagraphSpacing: Double = 0.72
+    @AppStorage("readerContentWidth") private var readerContentWidth: Double = 720
+    @AppStorage("readerMediaWidth") private var readerMediaWidth: Double = 90
 
     private enum ActiveSheet: Identifiable {
         case share(payload: String, token: UUID = UUID())
-        case articleSummary
         case readerSettings
         var id: UUID {
             switch self {
             case .share(_, let token): return token
-            case .articleSummary: return ActiveSheet.articleSummaryID
             case .readerSettings: return ActiveSheet.readerSettingsID
             }
         }
-        private static let articleSummaryID = UUID()
         private static let readerSettingsID = UUID()
     }
 
     init(entry: FeedEntry,
          feedColor: Color? = nil,
          onToggleRead: ((Bool) -> Void)? = nil,
-         onToggleBookmark: ((Bool) -> Void)? = nil) {
+         onToggleBookmark: ((Bool) -> Void)? = nil,
+         isCompactPresentation: Bool = false,
+         compactPresentationHeight: CGFloat = FeedDetailLayout.compactPresentationDoubleLineHeight,
+         onExpandPresentation: @escaping () -> Void = {},
+         onMinimizePresentation: @escaping () -> Void = {},
+         onClosePresentation: @escaping () -> Void = {},
+         onReadingProgressChange: @escaping (CGFloat) -> Void = { _ in }) {
         self.entry = entry
         self.feedColor = feedColor
         self.onToggleRead = onToggleRead
         self.onToggleBookmark = onToggleBookmark
+        self.isCompactPresentation = isCompactPresentation
+        self.compactPresentationHeight = compactPresentationHeight
+        self.onExpandPresentation = onExpandPresentation
+        self.onMinimizePresentation = onMinimizePresentation
+        self.onClosePresentation = onClosePresentation
+        self.onReadingProgressChange = onReadingProgressChange
     }
 
     init(entry: FeedEntry,
@@ -141,29 +376,37 @@ struct FeedDetailView: View {
          entriesProvider: @escaping () -> [FeedEntry],
          onNavigateToEntry: @escaping (FeedEntry, NavigationDirection) -> Void,
          onToggleRead: ((Bool) -> Void)? = nil,
-         onToggleBookmark: ((Bool) -> Void)? = nil) {
+         onToggleBookmark: ((Bool) -> Void)? = nil,
+         isCompactPresentation: Bool = false,
+         compactPresentationHeight: CGFloat = FeedDetailLayout.compactPresentationDoubleLineHeight,
+         onExpandPresentation: @escaping () -> Void = {},
+         onMinimizePresentation: @escaping () -> Void = {},
+         onClosePresentation: @escaping () -> Void = {},
+         onReadingProgressChange: @escaping (CGFloat) -> Void = { _ in }) {
         self.entry = entry
         self.feedColor = feedColor
         self.entriesProvider = entriesProvider
         self.onNavigateToEntry = onNavigateToEntry
         self.onToggleRead = onToggleRead
         self.onToggleBookmark = onToggleBookmark
+        self.isCompactPresentation = isCompactPresentation
+        self.compactPresentationHeight = compactPresentationHeight
+        self.onExpandPresentation = onExpandPresentation
+        self.onMinimizePresentation = onMinimizePresentation
+        self.onClosePresentation = onClosePresentation
+        self.onReadingProgressChange = onReadingProgressChange
     }
 
     private func currentIndex(in list: [FeedEntry]) -> Int? {
         list.firstIndex(where: { $0.link == entry.link })
     }
 
-    private var isAtFirstEntry: Bool {
-        let list = entriesProvider()
-        guard let idx = currentIndex(in: list) else { return false }
-        return idx == list.startIndex
-    }
-
-    private var isAtLastEntry: Bool {
-        let list = entriesProvider()
-        guard let idx = currentIndex(in: list) else { return false }
-        return list.index(after: idx) == list.endIndex
+    private var remainingUnreadCount: Int {
+        entriesProvider().reduce(into: 0) { count, candidate in
+            if !store.isRead(articleID: candidate.link) {
+                count += 1
+            }
+        }
     }
 
     private func goToPrevious() {
@@ -172,6 +415,7 @@ struct FeedDetailView: View {
         let target = list[list.index(before: currentIndex)]
         pendingNavigationDirection = .previous
         AppHaptics.softImpact()
+        resetArticlePosition(animated: true)
         withAnimation(.smooth(duration: 0.22)) { onNavigateToEntry(target, .previous) }
     }
 
@@ -183,6 +427,7 @@ struct FeedDetailView: View {
         let target = list[nextIndex]
         pendingNavigationDirection = .next
         AppHaptics.softImpact()
+        resetArticlePosition(animated: true)
         withAnimation(.smooth(duration: 0.22)) { onNavigateToEntry(target, .next) }
     }
 
@@ -251,6 +496,11 @@ struct FeedDetailView: View {
         return HTMLText.normalizePreviewSpacing(in: preferredSource)
     }
 
+    private var headerTitleLineHeight: CGFloat {
+        let preferredFont = UIFont.preferredFont(forTextStyle: .title3)
+        return UIFont.systemFont(ofSize: preferredFont.pointSize, weight: .semibold).lineHeight
+    }
+
     private var headerView: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(entry.displayTitle)
@@ -261,6 +511,19 @@ struct FeedDetailView: View {
                 .truncationMode(.tail)
                 .minimumScaleFactor(0.6)
                 .allowsTightening(true)
+                .fixedSize(horizontal: false, vertical: true)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: FeedDetailHeaderTitleHeightKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                }
+                .frame(
+                    minHeight: headerTitleLineHeight * 2,
+                    alignment: .topLeading
+                )
 
             HStack(spacing: 4) {
                 Text("\(entry.author ?? "Unbekannt")")
@@ -269,6 +532,9 @@ struct FeedDetailView: View {
             }
             .font(.subheadline)
             .foregroundColor(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(height: FeedDetailLayout.headerMetadataHeight, alignment: .leading)
 
             HStack(spacing: 8) {
                 if let publishDateLabel {
@@ -276,146 +542,189 @@ struct FeedDetailView: View {
                 }
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
-                    Image(systemName: "eyeglasses")
-                        .fontWeight(.light)
-                    Text(readingTimeLabel)
+                    if isSummaryMode {
+                        Button(action: revealAppleAILabel) {
+                            Image(systemName: "sparkles")
+                                .fontWeight(.medium)
+                                .foregroundStyle(resolvedFeedColor)
+                                .symbolEffect(
+                                    .variableColor.iterative,
+                                    options: .repeating,
+                                    isActive: isSummaryGenerating
+                                )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Apple AI-Information anzeigen")
+
+                        if showsAppleAILabel {
+                            Text("Generiert mit Apple AI")
+                                .transition(.opacity)
+                        }
+                    } else {
+                        Image(systemName: "eye")
+                            .fontWeight(.light)
+                        Text("\(remainingUnreadCount)")
+                            .contentTransition(.numericText())
+
+                        Text("·")
+
+                        Image(systemName: "eyeglasses")
+                            .fontWeight(.light)
+                        Text(readingTimeLabel)
+                    }
                 }
                 .multilineTextAlignment(.trailing)
             }
             .font(.footnote)
             .foregroundColor(.secondary)
+            .lineLimit(1)
+            .frame(height: FeedDetailLayout.headerDateHeight, alignment: .leading)
         }
         .padding(.horizontal)
         .padding(.bottom)
+        .frame(height: FeedDetailLayout.expandedHeaderHeight, alignment: .bottomLeading)
         .frame(maxWidth: .infinity, alignment: .bottomLeading)
+        .padding(.top)
+        .onPreferenceChange(FeedDetailHeaderTitleHeightKey.self) { measuredHeight in
+            guard measuredHeight > 0 else { return }
+            isHeaderTitleSingleLine = measuredHeight < headerTitleLineHeight * 1.5
+        }
     }
-    
+
     @ToolbarContentBuilder
     private var dynamicBottomToolbar: some ToolbarContent {
-        
-        ToolbarItem(placement: .topBarTrailing) {
-            Button(action: { toggleBookmark() }) {
-                ZStack {
-                    Image(systemName: "bookmark")
-                        .font(.system(size: 18))
-                        .fontWeight(.light)
-                    Image(systemName: "bookmark.fill")
-                        .font(.system(size: 18))
-                        .fontWeight(.light)
-                        .mask(Rectangle().scaleEffect(y: isBookmarked ? 1 : 0, anchor: .top))
-                }
-            }
-            .minimumHitTarget()
-            .accessibilityLabel(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen")
-            .foregroundStyle(isBookmarked ? resolvedFeedColor : UIStylePolicy.neutralIcon)
-        }
-        
         ToolbarItemGroup(placement: .bottomBar) {
-            // Left cluster
-            if bothExpanded || isLeftBarExpanded {
-                HStack(spacing: FeedDetailLayout.compactToolbarSpacing) {
-                    Button(action: {
-                        AppHaptics.selection()
-                        activeSheet = .readerSettings
-                    }) {
-                        Image(systemName: "textformat.size")
-                            .fontWeight(.light)
-                            .foregroundStyle(resolvedFeedColor)
-                    }
-                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
-                    .accessibilityLabel("Lesedarstellung")
-                    .accessibilityHint("Öffnet Einstellungen für Schrift und Layout")
-                    Button(action: {
-                        AppHaptics.lightImpact()
-                        if let url = URL(string: entry.link) { UIApplication.shared.open(url) }
-                    }) {
-                        Image(systemName: "safari")
-                            .fontWeight(.light)
-                            .foregroundStyle(resolvedFeedColor)
-                    }
-                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
-                    .accessibilityLabel("In Safari öffnen")
-                    Button(action: {
-                        AppHaptics.selection()
-                        gatherShareContent()
-                    }) {
-                        Image(systemName: "square.and.arrow.up")
-                            .fontWeight(.light)
-                            .foregroundStyle(resolvedFeedColor)
-                    }
-                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
-                    .accessibilityLabel("Teilen")
-                    Button(action: {
-                        AppHaptics.selection()
-                        activeSheet = .articleSummary
-                    }) {
-                        Image(systemName: "text.line.3.summary")
-                            .fontWeight(.light)
-                            .foregroundStyle(resolvedFeedColor)
-                    }
-                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
-                    .accessibilityLabel("Zusammenfassung anzeigen")
-                    Button(action: { onToggleReadAction() }) {
-                        Image(systemName: isReadLocal ? "eye.slash" : "eye")
-                            .fontWeight(.light)
-                            .foregroundStyle(isReadLocal ? resolvedFeedColor : UIStylePolicy.neutralIcon)
-                    }
-                    .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
-                    .accessibilityLabel(isReadLocal ? "Als ungelesen markieren" : "Als gelesen markieren")
-                }
-                .padding(.horizontal, FeedDetailLayout.compactToolbarHorizontalPadding)
-            } else {
-                Button {
-                    AppHaptics.selection()
-                    isLeftBarExpanded = true
-                    bothExpanded = true
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .fontWeight(.light)
-                        .foregroundStyle(resolvedFeedColor)
-                }
-                .minimumHitTarget()
-                .accessibilityLabel("Aktionen einblenden")
-            }
-
-            Spacer(minLength: 2)
-
-            // Right cluster
-            if bothExpanded || isRightBarExpanded {
-                HStack(spacing: FeedDetailLayout.compactToolbarSpacing) {
-                    Button(action: { goToPrevious() }) {
-                        Image(systemName: "chevron.left")
-                            .fontWeight(.light)
-                            .foregroundStyle(resolvedFeedColor.opacity(isAtFirstEntry ? 0.35 : 1.0))
-                    }
-                        .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
-                        .accessibilityLabel("Vorheriger Artikel")
-                        .disabled(isAtFirstEntry)
-                    Button(action: { goToNext() }) {
-                        Image(systemName: "chevron.right")
-                            .fontWeight(.light)
-                            .foregroundStyle(resolvedFeedColor.opacity(isAtLastEntry ? 0.35 : 1.0))
-                    }
-                        .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
-                        .accessibilityLabel("Nächster Artikel")
-                        .disabled(isAtLastEntry)
-                }
-                .padding(.horizontal, FeedDetailLayout.compactToolbarHorizontalPadding)
-            } else {
-                Button {
-                    AppHaptics.selection()
-                    isLeftBarExpanded = true
-                    isRightBarExpanded = true
-                    bothExpanded = true
-                } label: {
-                    Image(systemName: "chevron.left.chevron.right")
-                        .fontWeight(.light)
-                        .foregroundStyle(resolvedFeedColor)
-                }
-                .minimumHitTarget()
-                .accessibilityLabel("Navigation einblenden")
+            toolbarReadButton
+            toolbarBookmarkButton
+            summaryToolbarButton
+            if isSummaryMode {
+                regenerateSummaryToolbarButton
             }
         }
+
+        ToolbarSpacer(.flexible, placement: .bottomBar)
+
+        ToolbarItem(placement: .bottomBar) {
+            minimizePresentationButton
+        }
+
+        ToolbarSpacer(.fixed, placement: .bottomBar)
+
+        ToolbarItem(placement: .bottomBar) {
+            secondaryActionsMenu
+        }
+    }
+
+    private var minimizePresentationButton: some View {
+        Button {
+            AppHaptics.selection()
+            onMinimizePresentation()
+        } label: {
+            Image(systemName: "chevron.down")
+                .fontWeight(.light)
+                .foregroundStyle(resolvedFeedColor)
+        }
+        .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
+        .accessibilityLabel("Reader minimieren")
+    }
+
+    private var toolbarBookmarkButton: some View {
+        Button(action: toggleBookmark) {
+            ZStack {
+                Image(systemName: "bookmark")
+                    .font(.system(size: 18))
+                    .fontWeight(.light)
+                Image(systemName: "bookmark.fill")
+                    .font(.system(size: 18))
+                    .fontWeight(.light)
+                    .mask(Rectangle().scaleEffect(y: isBookmarked ? 1 : 0, anchor: .top))
+            }
+        }
+        .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
+        .accessibilityLabel(isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen setzen")
+        .foregroundStyle(isBookmarked ? resolvedFeedColor : UIStylePolicy.neutralIcon)
+    }
+
+    private var toolbarReadButton: some View {
+        Button(action: { onToggleReadAction() }) {
+            Image(systemName: isReadLocal ? "eye.slash" : "eye")
+                .fontWeight(.light)
+                .foregroundStyle(isReadLocal ? resolvedFeedColor : UIStylePolicy.neutralIcon)
+        }
+        .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
+        .accessibilityLabel(isReadLocal ? "Als ungelesen markieren" : "Als gelesen markieren")
+    }
+
+    private var summaryToolbarButton: some View {
+        Button {
+            AppHaptics.selection()
+            toggleSummaryMode()
+        } label: {
+            Image(systemName: "text.line.3.summary")
+                .fontWeight(.light)
+                .foregroundStyle(isSummaryMode ? resolvedFeedColor : UIStylePolicy.neutralIcon)
+        }
+        .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
+        .accessibilityLabel(isSummaryMode ? "Artikel anzeigen" : "Zusammenfassung anzeigen")
+    }
+
+    private var regenerateSummaryToolbarButton: some View {
+        Button {
+            AppHaptics.selection()
+            prepareSummaryForRegeneration()
+            summaryRegenerationRequestID += 1
+        } label: {
+            Image(systemName: "arrow.clockwise")
+                .fontWeight(.light)
+                .foregroundStyle(isSummaryGenerating ? UIStylePolicy.neutralIcon : resolvedFeedColor)
+        }
+        .disabled(isSummaryGenerating)
+        .minimumHitTarget(FeedDetailLayout.compactToolbarHitTarget)
+        .accessibilityLabel("Zusammenfassung neu erstellen")
+    }
+
+    private var secondaryActionsMenu: some View {
+        Menu {
+            Button {
+                AppHaptics.selection()
+                activeSheet = .readerSettings
+            } label: {
+                Label("Lesedarstellung", systemImage: "textformat.size")
+                    .foregroundStyle(resolvedFeedColor)
+            }
+
+            Button {
+                AppHaptics.lightImpact()
+                if let url = URL(string: entry.link) { UIApplication.shared.open(url) }
+            } label: {
+                Label("In Safari öffnen", systemImage: "safari")
+                    .foregroundStyle(resolvedFeedColor)
+            }
+
+            Button {
+                AppHaptics.selection()
+                shareCurrentContent()
+            } label: {
+                Label("Teilen", systemImage: "square.and.arrow.up")
+                    .foregroundStyle(resolvedFeedColor)
+            }
+            .disabled(isSummaryMode && summarySharePayload == nil)
+        } label: {
+            Image(systemName: "ellipsis")
+                .fontWeight(.light)
+                .foregroundStyle(resolvedFeedColor)
+        }
+        .tint(resolvedFeedColor)
+        .minimumHitTarget()
+        .accessibilityLabel("Weitere Aktionen")
+    }
+
+    private var showsBottomToolbar: Bool {
+        !isCompactPresentation && measuredPresentationExpansion >= 0.9
+    }
+
+    private var ignoredContainerEdges: Edge.Set {
+        [.top, .bottom]
     }
     
     private func onToggleReadAction() {
@@ -433,137 +742,632 @@ struct FeedDetailView: View {
     }
 
     var body: some View {
-        let htmlDocument = formattedHTML(accentHex: webAccentHexString())
+        let accentHex = webAccentHexString()
+        let htmlContentID = formattedHTMLContentID(accentHex: accentHex)
+        let htmlDocument = formattedHTML(
+            accentHex: accentHex,
+            contentID: htmlContentID
+        )
+        GeometryReader { proxy in
+            let expansionProgress = presentationExpansionProgress(
+                height: proxy.size.height,
+                bottomSafeAreaInset: proxy.safeAreaInsets.bottom
+            )
+            let compactOpacity = compactPresentationOpacity(for: expansionProgress)
+            let detailOpacity = detailPresentationOpacity(for: expansionProgress)
 
-        ZStack(alignment: .top) {
-            WebView(webView: webView,
-                    articleLink: entry.link,
-                    articleURL: URL(string: entry.link),
-                    htmlContent: htmlDocument,
-                    topInset: effectiveHeaderHeight,
-                    collapseProgress: $collapseProgress,
-                    readingProgress: $readingProgress)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .edgesIgnoringSafeArea(.bottom)
+            ZStack(alignment: .top) {
+                articleSurfaceBackground
+                    .ignoresSafeArea()
 
-            headerView
-                .background(
-                    GeometryReader { proxy in
-                        LinearGradient(
-                            colors: [headerTint.opacity(headerOverlayPrimaryOpacity), headerTint.opacity(headerOverlaySecondaryOpacity)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    }
+                observedDetailRoot(
+                    htmlDocument: htmlDocument,
+                    htmlContentID: htmlContentID
                 )
-                .opacity(max(0, 1 - collapseProgress))
-                .offset(y: -FeedDetailLayout.headerCollapseOffset * collapseProgress)
+                    .opacity(detailOpacity)
+                    .allowsHitTesting(expansionProgress > 0.82)
+                    .accessibilityHidden(expansionProgress < 0.82)
 
-            
-            GeometryReader { proxy in
-                let fullWidth = proxy.size.width
-                let barHeight: CGFloat = 2
-                let collapsedHeaderBottom = 0.0
-                ZStack(alignment: .topLeading) {
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.1))
-                        .frame(width: fullWidth, height: barHeight)
-                    Rectangle()
-                        .fill(resolvedFeedColor)
-                        .frame(width: fullWidth * max(0, min(1, readingProgress)), height: barHeight)
-                        .animation(.linear(duration: 0.15), value: readingProgress)
+                compactPresentationView
+                    .frame(height: compactPresentationHeight)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .opacity(compactOpacity)
+                    .allowsHitTesting(expansionProgress < 0.58)
+                    .accessibilityHidden(expansionProgress >= 0.58)
+
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            .clipped()
+            .onChange(of: expansionProgress, initial: true) { _, newValue in
+                guard abs(newValue - measuredPresentationExpansion) > 0.002 else { return }
+                if measuredPresentationExpansion < 0.82 && newValue >= 0.82 {
+                    synchronizeChromeWithCurrentScrollPosition(animated: false)
                 }
-                .padding(.horizontal, 0)
-                .offset(y: collapsedHeaderBottom)
-            }
-            .allowsHitTesting(false)
-        }
-        .offset(x: contentOffset)
-        .opacity(contentOpacity)
-        .background(alignment: .top) {
-            GeometryReader { proxy in
-                headerBackgroundGradient
-                    .frame(height: proxy.safeAreaInsets.top + effectiveHeaderHeight)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .ignoresSafeArea(edges: .top)
-                    .allowsHitTesting(false)
+                measuredPresentationExpansion = newValue
             }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationTitle(collapseProgress > 0.6 ? entry.displayTitle : "")
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbar {dynamicBottomToolbar}
-        .onAppear {
-            isReadLocal = store.isRead(articleID: entry.link)
-            isBookmarked = isCurrentlyBookmarked()
-            collapseProgress = 0
-            readingProgress = 0
-            isLeftBarExpanded = true
-            isRightBarExpanded = true
-            bothExpanded = true
-            hasAppeared = true
-        }
-        .onChange(of: entry.link) { _, _ in
-            guard hasAppeared else { return }
-            isReadLocal = store.isRead(articleID: entry.link)
-            isBookmarked = isCurrentlyBookmarked()
-            collapseProgress = 0
-            readingProgress = 0
-            isLeftBarExpanded = true
-            isRightBarExpanded = true
-            bothExpanded = true
-            animateEntryTransition()
-        }
-        .onPreferenceChange(FeedDetailHeaderHeightKey.self) { newValue in
-            let clampedValue = max(FeedDetailLayout.expandedHeaderHeight, newValue)
-            guard abs(clampedValue - headerHeight) > 0.5 else { return }
-            headerHeight = clampedValue
-        }
-        .onChange(of: collapseProgress) { _, newProgress in
-            let shouldExpand = newProgress <= 0.7
-            guard bothExpanded != shouldExpand ||
-                    isLeftBarExpanded != shouldExpand ||
-                    isRightBarExpanded != shouldExpand else {
-                return
+        .ignoresSafeArea(.container, edges: ignoredContainerEdges)
+        .toolbar {
+            if showsBottomToolbar {
+                dynamicBottomToolbar
             }
-            // Removed animation for collapseProgress changes
-            isLeftBarExpanded = shouldExpand
-            isRightBarExpanded = shouldExpand
-            bothExpanded = shouldExpand
         }
-        .onChange(of: readerFontScale) { _, newValue in
+        .toolbarVisibility(.hidden, for: .navigationBar)
+        .toolbarVisibility(
+            showsBottomToolbar ? .visible : .hidden,
+            for: .bottomBar
+        )
+    }
+
+    private func toggleSummaryMode() {
+        if isSummaryMode {
+            guard !isSummaryDismissAnimating else { return }
+            isSummaryDismissAnimating = true
+            summaryDismissRequestID += 1
+        } else {
+            articleCollapseProgressBeforeSummary = scrollState.collapseProgress
+            isSummaryGenerating = true
+            summaryRainbowRevealProgress = 0
+            summaryRainbowCompletionProgress = 0
+            summaryContentVisibility = 0
+            summaryDismissRequestID = 0
+            isSummaryDismissAnimating = false
+            withAnimation(.smooth(duration: 0.42)) {
+                scrollState.collapseProgress = 0
+                isSummaryMode = true
+            }
+            withAnimation(.easeOut(duration: 0.85).delay(0.08)) {
+                summaryRainbowRevealProgress = 1
+            }
+        }
+    }
+
+    private func exitSummaryMode(animated: Bool) {
+        let updates = {
+            isSummaryMode = false
+            isSummaryGenerating = false
+            summaryRainbowRevealProgress = 0
+            summaryRainbowCompletionProgress = 0
+            summaryContentVisibility = 0
+            summarySharePayload = nil
+            showsAppleAILabel = false
+            appleAILabelRequestID += 1
+            scrollState.collapseProgress = articleCollapseProgressBeforeSummary
+            isSummaryDismissAnimating = false
+        }
+        if animated {
+            withAnimation(.smooth(duration: 0.3)) {
+                updates()
+            }
+        } else {
+            updates()
+        }
+    }
+
+    private func revealAppleAILabel() {
+        appleAILabelRequestID += 1
+        let requestID = appleAILabelRequestID
+
+        withAnimation(.easeInOut(duration: 0.22)) {
+            showsAppleAILabel = true
+        }
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            guard requestID == appleAILabelRequestID else { return }
+            withAnimation(.easeInOut(duration: 0.28)) {
+                showsAppleAILabel = false
+            }
+        }
+    }
+
+    private func updateReadingLiveActivityProgress(_ progress: CGFloat) {
+        let now = CACurrentMediaTime()
+        guard abs(progress - lastLiveActivityProgressValue) >= 0.015 || now - lastLiveActivityProgressUpdateTime >= 2.5 else {
+            return
+        }
+        lastLiveActivityProgressUpdateTime = now
+        lastLiveActivityProgressValue = progress
+        ReadingLiveActivityManager.shared.updateReadingProgress(Double(progress), for: entry.link)
+    }
+
+    private func handleSummaryGenerationState(_ isGenerating: Bool) {
+        if isGenerating {
+            withAnimation(.easeInOut(duration: 0.28)) {
+                isSummaryGenerating = true
+            }
+            withAnimation(.easeInOut(duration: 0.52)) {
+                summaryRainbowCompletionProgress = 0
+                summaryContentVisibility = 0
+            }
+        } else {
+            withAnimation(.easeInOut(duration: 0.28)) {
+                isSummaryGenerating = false
+            }
+            withAnimation(.easeInOut(duration: 0.46)) {
+                summaryRainbowCompletionProgress = 1
+                summaryContentVisibility = 1
+            }
+        }
+    }
+
+    private func prepareSummaryForRegeneration() {
+        withAnimation(.easeInOut(duration: 0.28)) {
+            isSummaryGenerating = true
+        }
+        withAnimation(.easeInOut(duration: 0.52)) {
+            summaryRainbowCompletionProgress = 0
+            summaryContentVisibility = 0
+        }
+    }
+
+    private func presentationExpansionProgress(
+        height: CGFloat,
+        bottomSafeAreaInset: CGFloat
+    ) -> CGFloat {
+        let compactHeight = compactPresentationHeight + bottomSafeAreaInset
+        let linearProgress = (height - compactHeight) / FeedDetailLayout.presentationTransitionDistance
+        return smoothstep(min(1, max(0, linearProgress)))
+    }
+
+    private func compactPresentationOpacity(for expansionProgress: CGFloat) -> Double {
+        let fadeProgress = smoothstep(min(1, max(0, expansionProgress / 0.52)))
+        return Double(1 - fadeProgress)
+    }
+
+    private func detailPresentationOpacity(for expansionProgress: CGFloat) -> Double {
+        let linearProgress = (expansionProgress - 0.18) / 0.64
+        return Double(smoothstep(min(1, max(0, linearProgress))))
+    }
+
+    private var compactPresentationView: some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(entry.sourceTitle ?? "Unbekannte Quelle")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(resolvedFeedColor)
+                    .lineLimit(1)
+
+                Text(entry.displayTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .multilineTextAlignment(.leading)
+
+                FeedDetailCompactProgressBar(
+                    scrollState: scrollState,
+                    tint: resolvedFeedColor
+                )
+            }
+
+            Button {
+                AppHaptics.lightImpact()
+                onClosePresentation()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 34, height: 34)
+                    .background(Color.primary.opacity(0.10), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .minimumHitTarget()
+            .accessibilityLabel("Reader schließen")
+        }
+        .padding(.horizontal, FeedDetailLayout.compactHorizontalInset)
+        .padding(.top, FeedDetailLayout.compactTopInset)
+        .padding(.bottom, FeedDetailLayout.compactBottomInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            AppHaptics.selection()
+            onExpandPresentation()
+        }
+        .accessibilityHint("Doppeltippen, um den Artikel wieder zu öffnen")
+    }
+
+    private func observedDetailRoot(
+        htmlDocument: String,
+        htmlContentID: String
+    ) -> AnyView {
+        let root = detailRoot(
+            htmlDocument: htmlDocument,
+            htmlContentID: htmlContentID
+        )
+        let appeared = root.onAppear {
+            handleAppear()
+        }
+        let entryObserved = appeared.onChange(of: entry.link) { _, _ in
+            handleEntryLinkChange()
+        }
+        let headerObserved = entryObserved.onPreferenceChange(FeedDetailHeaderHeightKey.self) { newValue in
+            handleHeaderHeightChange(newValue)
+        }
+        let fontScaleObserved = headerObserved.onChange(of: readerFontScale) { _, newValue in
             FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerFontScale)
         }
-        .onChange(of: readerFontFamily) { _, newValue in
+        let fontFamilyObserved = fontScaleObserved.onChange(of: readerFontFamily) { _, newValue in
             FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerFontFamily)
         }
-        .onChange(of: readerLineSpacing) { _, newValue in
+        let lineSpacingObserved = fontFamilyObserved.onChange(of: readerLineSpacing) { _, newValue in
             FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerLineSpacing)
         }
-        .onChange(of: readerTextAlignmentRaw) { _, newValue in
+        let textAlignmentObserved = lineSpacingObserved.onChange(of: readerTextAlignmentRaw) { _, newValue in
             FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerTextAlignment)
         }
-        .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case .share(let payload, _):
-                ShareSheet(items: [payload])
-                    .presentationDetents([UIStylePolicy.Sheet.mediumDetent])
-            case .articleSummary:
-                ArticleSummarySheet(
+        let paragraphSpacingObserved = textAlignmentObserved.onChange(of: readerParagraphSpacing) { _, newValue in
+            FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerParagraphSpacing)
+        }
+        let contentWidthObserved = paragraphSpacingObserved.onChange(of: readerContentWidth) { _, newValue in
+            FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerContentWidth)
+        }
+        let mediaWidthObserved = contentWidthObserved.onChange(of: readerMediaWidth) { _, newValue in
+            FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerMediaWidth)
+        }
+        let liveActivityObserved = mediaWidthObserved.onChange(of: scrollState.readingProgress, initial: true) { _, newValue in
+            updateReadingLiveActivityProgress(newValue)
+            onReadingProgressChange(newValue)
+        }
+        return AnyView(liveActivityObserved)
+    }
+
+    private func detailRoot(
+        htmlDocument: String,
+        htmlContentID: String
+    ) -> AnyView {
+        let content = detailContent(
+            htmlDocument: htmlDocument,
+            htmlContentID: htmlContentID
+        )
+        let animatedContent = content
+            .offset(x: contentOffset)
+
+        return AnyView(
+            ZStack(alignment: .top) {
+                // Keep the cover opaque while article content fades or slides.
+                // Otherwise the feed list underneath flashes through between entries.
+                articleSurfaceBackground
+                    .ignoresSafeArea()
+
+                animatedContent
+
+                collapsingNavigationBar
+            }
+            .opacity(contentOpacity)
+        )
+    }
+
+    private func detailContent(
+        htmlDocument: String,
+        htmlContentID: String
+    ) -> some View {
+        ZStack(alignment: .top) {
+            webLayer(
+                htmlDocument: htmlDocument,
+                htmlContentID: htmlContentID
+            )
+                .opacity(isSummaryMode ? 0 : 1)
+                .allowsHitTesting(!isSummaryMode)
+                .accessibilityHidden(isSummaryMode)
+
+            if isSummaryMode {
+                summaryRainbowSheetGlow
+                    .zIndex(0.5)
+
+                ArticleSummaryView(
                     title: entry.displayTitle,
                     sourceText: articleSummarySourceText,
                     link: entry.link,
-                    feedColor: resolvedFeedColor
+                    feedColor: resolvedFeedColor,
+                    topInset: effectiveHeaderHeight,
+                    dismissRequestID: summaryDismissRequestID,
+                    regenerationRequestID: summaryRegenerationRequestID,
+                    onGenerationStateChange: handleSummaryGenerationState,
+                    onSharePayloadChange: { summarySharePayload = $0 },
+                    onDismissAnimationComplete: {
+                        exitSummaryMode(animated: true)
+                    }
                 )
                 .environmentObject(store)
-            case .readerSettings:
-                ReaderSettingsPanel(textAlignment: $readerTextAlignmentRaw,
-                                    fontScale: $readerFontScale,
-                                    fontFamily: $readerFontFamily,
-                                    lineSpacing: $readerLineSpacing,
-                                    feedColor: .constant(resolvedFeedColor))
-                    .presentationDetents([UIStylePolicy.Sheet.mediumDetent])
+                .mask(alignment: .top) {
+                    Rectangle()
+                        .scaleEffect(
+                            y: max(0, CGFloat(summaryContentVisibility)),
+                            anchor: .top
+                        )
+                        .blur(radius: 8)
+                }
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity.combined(with: .move(edge: .trailing)),
+                        removal: .opacity.combined(with: .move(edge: .trailing))
+                    )
+                )
+                .zIndex(1)
             }
+
+            headerLayer
+            progressLayer
+            sheetPresenter
+        }
+    }
+
+    private var collapsingNavigationBar: some View {
+        FeedDetailCollapsingNavigationBar(
+            title: entry.displayTitle,
+            tint: navigationBarTint,
+            isSummaryMode: isSummaryMode,
+            scrollState: scrollState
+        )
+    }
+
+    private func webLayer(
+        htmlDocument: String,
+        htmlContentID: String
+    ) -> some View {
+        WebView(webView: webView,
+                articleLink: entry.link,
+                articleURL: URL(string: entry.link),
+                htmlContent: htmlDocument,
+                htmlContentID: htmlContentID,
+                topInset: effectiveHeaderHeight,
+                scrollState: scrollState,
+                onSwipeLeft: goToNext,
+                onSwipeRight: goToPrevious)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            //.ignoresSafeArea(.container, edges: .bottom)
+    }
+
+    private var headerLayer: some View {
+        FeedDetailCollapsingHeader(
+            scrollState: scrollState,
+            isSummaryMode: isSummaryMode,
+            headerHeight: effectiveHeaderHeight
+        ) {
+            headerView
+                .background(alignment: .top) {
+                    ZStack {
+                        headerOverlayGradient
+
+                        if isSummaryMode {
+                            activeSummaryRainbowGlow
+                                .frame(maxHeight: .infinity, alignment: .bottom)
+                                .opacity(
+                                    0.82
+                                        * Double(summaryRainbowRevealProgress)
+                                        * Double(1 - summaryRainbowCompletionProgress)
+                                )
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(
+                        height: effectiveHeaderHeight + headerGradientBottomExtension,
+                        alignment: .top
+                    )
+                }
+        }
+    }
+
+    private var summaryRainbowSheetGlow: some View {
+        GeometryReader { proxy in
+            restingSummaryRainbowGlow
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .opacity(
+                    0.264
+                        * Double(summaryRainbowRevealProgress)
+                        * Double(summaryRainbowCompletionProgress)
+                )
+                .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var activeSummaryRainbowGlow: some View {
+        staticSummaryRainbow
+            .frame(maxWidth: .infinity)
+            .frame(height: 72)
+            .opacity(colorScheme == .dark ? 0.82 : 0.74)
+            .blur(radius: 5)
+            .mask {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black.opacity(0.28), location: 0.42),
+                        .init(color: .black.opacity(0.72), location: 0.78),
+                        .init(color: .black, location: 1)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+    }
+
+    private var restingSummaryRainbowGlow: some View {
+        staticSummaryRainbow
+            .frame(maxWidth: .infinity)
+            .frame(height: 360)
+            .opacity(colorScheme == .dark ? 0.638 : 0.55)
+            .blur(radius: 8)
+            .mask {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black.opacity(0.04), location: 0.34),
+                        .init(color: .black.opacity(0.18), location: 0.62),
+                        .init(color: .black.opacity(0.55), location: 0.84),
+                        .init(color: .black, location: 1)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+    }
+
+    private var staticSummaryRainbow: some View {
+        return LinearGradient(
+            colors: [
+                Color(red: 1.00, green: 0.25, blue: 0.37),
+                Color(red: 1.00, green: 0.66, blue: 0.20),
+                Color(red: 0.32, green: 0.84, blue: 0.48),
+                Color(red: 0.20, green: 0.68, blue: 1.00),
+                Color(red: 0.55, green: 0.38, blue: 1.00),
+                Color(red: 1.00, green: 0.25, blue: 0.62)
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+        .saturation(0.82)
+        .brightness(colorScheme == .dark ? -0.12 : 0)
+    }
+
+    private var headerOverlayGradient: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: headerTint, location: 0),
+                .init(color: headerTint.opacity(headerOverlaySecondaryOpacity), location: 0.9),
+                .init(color: .clear, location: 1)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    private var headerGradientBottomExtension: CGFloat {
+        isHeaderTitleSingleLine ? headerTitleLineHeight : 0
+    }
+
+    private var articleSurfaceBackground: some View {
+        ZStack {
+            Color(.systemBackground)
+
+            LinearGradient(
+                stops: [
+                    .init(color: headerTint.opacity(surfaceTopTintOpacity), location: 0),
+                    .init(color: headerTint.opacity(surfaceHeaderTintOpacity), location: 0.18),
+                    .init(color: headerTint.opacity(surfaceContentTintOpacity), location: 0.42),
+                    .init(color: headerTint.opacity(surfaceTailTintOpacity), location: 1)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            LinearGradient(
+                stops: [
+                    .init(color: Color.black.opacity(colorScheme == .dark ? 0.18 : 0), location: 0),
+                    .init(color: .clear, location: 0.38)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+
+    private var progressLayer: some View {
+        FeedDetailReadingProgressLayer(
+            scrollState: scrollState,
+            tint: resolvedFeedColor,
+            isSummaryMode: isSummaryMode
+        )
+    }
+
+    private func handleAppear() {
+        isReadLocal = store.isRead(articleID: entry.link)
+        isBookmarked = isCurrentlyBookmarked()
+        resetArticlePosition(animated: false)
+        hasAppeared = true
+    }
+
+    private func handleEntryLinkChange() {
+        guard hasAppeared else { return }
+        exitSummaryMode(animated: false)
+        isReadLocal = store.isRead(articleID: entry.link)
+        isBookmarked = isCurrentlyBookmarked()
+        resetArticlePosition(animated: true)
+        animateEntryTransition()
+    }
+
+    private func resetArticlePosition(animated: Bool) {
+        let updates = {
+            scrollState.reset()
+        }
+
+        if animated {
+            withAnimation(.smooth(duration: 0.24)) {
+                updates()
+            }
+        } else {
+            updates()
+        }
+
+        let minimumOffsetY = -webView.scrollView.adjustedContentInset.top
+        webView.scrollView.setContentOffset(
+            CGPoint(x: webView.scrollView.contentOffset.x, y: minimumOffsetY),
+            animated: animated
+        )
+    }
+
+    private func synchronizeChromeWithCurrentScrollPosition(animated: Bool) {
+        let scrollView = webView.scrollView
+        let currentOffset = scrollView.contentOffset.y
+        let topInset = scrollView.adjustedContentInset.top
+        let bottomInset = scrollView.adjustedContentInset.bottom
+        let minOffsetY = -topInset
+        let maxOffsetY = max(
+            minOffsetY,
+            scrollView.contentSize.height - scrollView.bounds.height + bottomInset
+        )
+        let clampedOffsetY = min(max(currentOffset, minOffsetY), maxOffsetY)
+        let scrollDistanceFromTop = max(0, clampedOffsetY - minOffsetY)
+        let collapseProgress = FeedDetailLayout.clampedProgress(
+            scrollDistanceFromTop / FeedDetailLayout.headerCollapseRange
+        )
+
+        let updates = {
+            scrollState.collapseProgress = collapseProgress
+        }
+
+        if animated {
+            withAnimation(.smooth(duration: 0.18)) {
+                updates()
+            }
+        } else {
+            updates()
+        }
+    }
+
+    private func handleHeaderHeightChange(_ newValue: CGFloat) {
+        let clampedValue = max(FeedDetailLayout.expandedHeaderHeight, newValue)
+        guard abs(clampedValue - headerHeight) > 0.5 else { return }
+        headerHeight = clampedValue
+    }
+
+    private var sheetPresenter: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .sheet(item: $activeSheet) { sheet in
+                activeSheetView(sheet)
+            }
+            .accessibilityHidden(true)
+    }
+
+    @ViewBuilder
+    private func activeSheetView(_ sheet: ActiveSheet) -> some View {
+        switch sheet {
+        case .share(let payload, _):
+            ShareSheet(items: [payload])
+                .presentationDetents([UIStylePolicy.Sheet.mediumDetent])
+        case .readerSettings:
+            ReaderSettingsPanel(textAlignment: $readerTextAlignmentRaw,
+                                fontScale: $readerFontScale,
+                                fontFamily: $readerFontFamily,
+                                lineSpacing: $readerLineSpacing,
+                                paragraphSpacing: $readerParagraphSpacing,
+                                contentWidth: $readerContentWidth,
+                                mediaWidth: $readerMediaWidth,
+                                feedColor: .constant(resolvedFeedColor))
+                .presentationDetents([UIStylePolicy.Sheet.mediumDetent])
         }
     }
 
@@ -1048,52 +1852,106 @@ struct FeedDetailView: View {
         return "rgb(\(red),\(green),\(blue))"
     }
     
-    private func formattedHTML(accentHex: String) -> String {
+    private func formattedHTMLContentID(accentHex: String) -> String {
+        let rawBodySource = (entry.contentRaw?.isEmpty == false) ? entry.contentRaw! : entry.content
+        return [
+            entry.link,
+            String(rawBodySource.utf8.count),
+            String(readerFontScale),
+            readerFontFamily,
+            String(readerLineSpacing),
+            readerTextAlignmentRaw,
+            String(readerParagraphSpacing),
+            String(readerContentWidth),
+            String(readerMediaWidth),
+            accentHex
+        ].joined(separator: "|")
+    }
+
+    private func formattedHTML(accentHex: String, contentID: String) -> String {
+        let rawBodySource = (entry.contentRaw?.isEmpty == false) ? entry.contentRaw! : entry.content
+        let cacheKey = contentID as NSString
+
+        if let cachedDocument = Self.formattedHTMLCache.object(forKey: cacheKey) {
+            return cachedDocument as String
+        }
+
         let fontSize = 18 * readerFontScale
         let lineHeight = readerLineSpacing
         let fontFamilyCSS = (ReaderFontFamily(rawValue: readerFontFamily) ?? .rounded).cssValue
         let textAlignCSS = readerTextAlignmentRaw == "justified" ? "justify" : readerTextAlignmentRaw
         let rgb = resolvedFeedColor.rgbComponents ?? (0,0,0)
-        let backgroundBase = colorScheme == .dark ? (0, 0, 0) : (255, 255, 255)
-        let background: String = mixedRGBColor(base: backgroundBase, overlay: rgb, overlayOpacity: 0.1)
         let mediaGlow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.16)"
         let mediaShadow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.14)"
         let codeBackground: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.16)"
         let inlineCodeBackground: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.22)"
-        let rawBodySource = (entry.contentRaw?.isEmpty == false) ? entry.contentRaw! : entry.content
         let rawBody = HTMLText.normalizeHTMLContent(rawBodySource)
         let bodyHTML = sanitizedReaderBody(from: rawBody)
 
-        return """
+        let document = """
         <html>
           <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
-              html { overflow-x: hidden; min-height: 100%; background: \(background); }
-              :root { --reader-media-width: 90%; }
+              html { overflow-x: hidden; min-height: 100%; background: transparent; }
+              :root {
+                --reader-line-height: \(lineHeight);
+                --reader-paragraph-spacing: \(readerParagraphSpacing)em;
+                --reader-content-width: \(readerContentWidth)px;
+                --reader-media-width: \(readerMediaWidth)%;
+              }
               * { box-sizing: border-box; }
-              body { font-family: \(fontFamilyCSS); font-size: \(fontSize)px; min-height: 100%; padding: 16px; line-height: \(lineHeight); margin: 0; text-align: \(textAlignCSS); background: \(background); overflow-wrap: break-word; word-break: normal; }
-              p, li, blockquote { overflow-wrap: anywhere; }
-              p { margin: 0 0 0.78em; }
+              body { font-family: \(fontFamilyCSS); font-size: \(fontSize)px; min-height: 100%; max-width: var(--reader-content-width); padding: 16px; line-height: 1.35; margin: 0 auto; text-align: \(textAlignCSS); background: transparent; overflow-wrap: break-word; word-break: normal; }
+              p, li, blockquote, h1, h2, h3, h4, h5, h6 { overflow-wrap: anywhere; }
+              p { margin: 0 0 var(--reader-paragraph-spacing); line-height: var(--reader-line-height); }
               p:last-child { margin-bottom: 0; }
+              h1, h2, h3, h4, h5, h6 {
+                line-height: 1.2;
+                margin: 1.15em 0 0.46em;
+                text-align: left;
+              }
+              h1:first-child, h2:first-child, h3:first-child,
+              h4:first-child, h5:first-child, h6:first-child { margin-top: 0; }
+              h1 { font-size: 1.55em; }
+              h2 { font-size: 1.35em; }
+              h3 { font-size: 1.18em; }
+              h4, h5, h6 { font-size: 1em; }
+              blockquote {
+                margin: 0.9em 0;
+                padding: 0.1em 0 0.1em 0.85em;
+                border-left: 3px solid \(accentHex);
+              }
+              figure {
+                margin: 1em 0;
+              }
+              figcaption {
+                margin-top: -0.35em;
+                font-size: 0.82em;
+                line-height: 1.35;
+                opacity: 0.72;
+                text-align: center;
+              }
               ul, ol {
-                margin: 0.56em 0 0.9em;
+                margin: 0.45em 0 0.78em;
                 padding-inline-start: 1.18em;
               }
               li {
-                margin: 0.22em 0;
+                margin: 0.16em 0;
                 padding-inline-start: 0.08em;
+                line-height: 1.35;
               }
               li > p {
                 margin: 0.18em 0;
+                line-height: 1.35;
               }
               li > p:first-child { margin-top: 0; }
               li > p:last-child { margin-bottom: 0; }
               li > ul, li > ol { margin: 0.32em 0 0.46em; }
               @media (prefers-color-scheme: dark) { body { color: #EAEAEA; } a { color: \(accentHex); } }
               @media (prefers-color-scheme: light) { body { color: #111111; } a { color: \(accentHex); } }
-              img, video, iframe { display: block !important; max-width: var(--reader-media-width) !important; border-radius: 10px; margin: 16px auto !important; float: none !important; clear: both; background: transparent !important; box-shadow: 0 10px 24px \(mediaShadow), 0 0 0 1px rgba(255,255,255,0.08), 0 0 12px \(mediaGlow), 0 0 20px \(mediaGlow); }
+              img, video, iframe { display: block !important; max-width: var(--reader-media-width) !important; border-radius: 10px; margin: 0.9em auto !important; float: none !important; clear: both; background: transparent !important; box-shadow: 0 10px 24px \(mediaShadow), 0 0 0 1px rgba(255,255,255,0.08), 0 0 12px \(mediaGlow), 0 0 20px \(mediaGlow); }
+              figure > img, figure > video, figure > iframe { margin-top: 0 !important; }
               img, video { width: auto !important; height: auto !important; }
               iframe { width: var(--reader-media-width) !important; height: auto !important; aspect-ratio: 16/9; }
               iframe:not([src]), iframe[src=""], img:not([src]), img[src=""] { display: none !important; }
@@ -1200,13 +2058,32 @@ struct FeedDetailView: View {
           <body>\(bodyHTML)</body>
         </html>
         """
+        Self.formattedHTMLCache.setObject(
+            document as NSString,
+            forKey: cacheKey,
+            cost: document.utf8.count
+        )
+        return document
     }
 
     private var resolvedFeedColor: Color {
         feedColor ?? theme.uiAccentColor
     }
 
-    private var headerTint: Color { resolvedFeedColor }
+    private var headerTint: Color {
+        guard let components = resolvedFeedColor.rgbComponents else {
+            return resolvedFeedColor
+        }
+        let darkeningFactor = colorScheme == .dark ? 0.78 : 0.86
+
+        return Color(
+            .sRGB,
+            red: max(0, min(1, Double(components.red) / 255.0 * darkeningFactor)),
+            green: max(0, min(1, Double(components.green) / 255.0 * darkeningFactor)),
+            blue: max(0, min(1, Double(components.blue) / 255.0 * darkeningFactor)),
+            opacity: 1
+        )
+    }
 
     private var headerOverlayPrimaryOpacity: Double {
         colorScheme == .dark ? 0.30 : 0.42
@@ -1214,6 +2091,26 @@ struct FeedDetailView: View {
 
     private var headerOverlaySecondaryOpacity: Double {
         colorScheme == .dark ? UIStylePolicy.glassAccentOpacity : 0.16
+    }
+
+    private var navigationBarTint: Color {
+        headerTint
+    }
+
+    private var surfaceTopTintOpacity: Double {
+        colorScheme == .dark ? 0.34 : 0.34
+    }
+
+    private var surfaceHeaderTintOpacity: Double {
+        colorScheme == .dark ? 0.18 : 0.18
+    }
+
+    private var surfaceContentTintOpacity: Double {
+        colorScheme == .dark ? 0.08 : 0.07
+    }
+
+    private var surfaceTailTintOpacity: Double {
+        colorScheme == .dark ? 0.03 : 0.025
     }
 
     private var headerBackgroundGradient: LinearGradient { //ganz oben dad ding
@@ -1234,11 +2131,18 @@ struct FeedDetailView: View {
             activeSheet = .share(payload: composed)
         }
     }
+
+    private func shareCurrentContent() {
+        if isSummaryMode {
+            guard let summarySharePayload else { return }
+            activeSheet = .share(payload: summarySharePayload)
+        } else {
+            gatherShareContent()
+        }
+    }
     
     private func isCurrentlyBookmarked() -> Bool {
-        let descriptor = FetchDescriptor<FeedEntryModel>(predicate: #Predicate { $0.link == entry.link && $0.isBookmarked })
-        let results = try? modelContext.fetch(descriptor)
-        return (results?.isEmpty == false)
+        BookmarkService.isBookmarked(link: entry.link, context: modelContext)
     }
     
     private func toggleBookmark() {
@@ -1247,16 +2151,25 @@ struct FeedDetailView: View {
         AppHaptics.selection()
         onToggleBookmark?(isBookmarked)
     }
+
+    // MARK: - Helper Functions
+
+    private func smoothstep(_ x: CGFloat) -> CGFloat {
+        let t = min(1, max(0, x))
+        return t * t * (3 - 2 * t)
+    }
 }
 
-struct WebView: UIViewRepresentable {
+private struct WebView: UIViewRepresentable {
     let webView: WKWebView
     let articleLink: String
     let articleURL: URL?
     let htmlContent: String
+    let htmlContentID: String
     let topInset: CGFloat
-    @Binding var collapseProgress: CGFloat
-    @Binding var readingProgress: CGFloat
+    let scrollState: FeedDetailScrollState
+    var onSwipeLeft: () -> Void = {}
+    var onSwipeRight: () -> Void = {}
     private var youtubeEmbedBaseURL: URL? {
         let appIdentifier = Bundle.main.bundleIdentifier?.lowercased() ?? "notifeeder.app"
         return URL(string: "https://\(appIdentifier)")
@@ -1265,14 +2178,17 @@ struct WebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         webView.scrollView.delegate = context.coordinator
         webView.navigationDelegate = context.coordinator
+        context.coordinator.configureGestureRecognizers(for: webView)
         loadContent(into: webView, coordinator: context.coordinator, forcePinToTop: true)
 
         return webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        let expectedLocalFilePath = OfflineArticleArchive.articleHTMLFileURL(forArticleLink: articleLink)?.path
-        if context.coordinator.lastLoadedHTML != htmlContent || context.coordinator.lastLoadedFilePath != expectedLocalFilePath {
+        context.coordinator.onSwipeLeft = onSwipeLeft
+        context.coordinator.onSwipeRight = onSwipeRight
+
+        if context.coordinator.lastLoadedContentID != htmlContentID {
             context.coordinator.resetScrollState()
             loadContent(into: uiView, coordinator: context.coordinator, forcePinToTop: true)
             return
@@ -1282,7 +2198,11 @@ struct WebView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(collapseProgress: $collapseProgress, readingProgress: $readingProgress)
+        Coordinator(
+            scrollState: scrollState,
+            onSwipeLeft: onSwipeLeft,
+            onSwipeRight: onSwipeRight
+        )
     }
 
     private func setVerticalScrollIndicatorTopInset(_ topInset: CGFloat, for scrollView: UIScrollView) {
@@ -1310,7 +2230,14 @@ struct WebView: UIViewRepresentable {
     }
 
     private func loadContent(into webView: WKWebView, coordinator: Coordinator, forcePinToTop: Bool) {
+        coordinator.lastLoadedArticleLink = articleLink
+        coordinator.lastLoadedContentID = htmlContentID
         coordinator.lastLoadedHTML = htmlContent
+        coordinator.prepareForContentLoad(
+            in: webView.scrollView,
+            topInset: topInset,
+            animated: false
+        )
 
         if let localFileURL = OfflineArticleArchive.prepareOfflineHTMLDocument(
             forArticleLink: articleLink,
@@ -1327,20 +2254,86 @@ struct WebView: UIViewRepresentable {
         applyTopInset(topInset, to: webView.scrollView, forcePinToTop: forcePinToTop)
     }
 
-    class Coordinator: NSObject, UIScrollViewDelegate, WKNavigationDelegate {
-        @Binding var collapseProgress: CGFloat
-        @Binding var readingProgress: CGFloat
-        private let collapseRange: CGFloat = 120 // pixels over which header collapses
-        private let progressUpdateThreshold: CGFloat = 0.005
+    class Coordinator: NSObject, UIScrollViewDelegate, WKNavigationDelegate, UIGestureRecognizerDelegate {
+        let scrollState: FeedDetailScrollState
+        var onSwipeLeft: () -> Void
+        var onSwipeRight: () -> Void
+        private let collapseUpdateThreshold: CGFloat = 0.002
+        private let readingUpdateThreshold: CGFloat = 0.002
+        private let minimumUpdateInterval: CFTimeInterval = 1.0 / 60.0
+        private var lastProgressUpdateTime: CFTimeInterval = 0
+        private var didInstallSwipeRecognizers = false
+        private var pendingTopReset = false
+        private var pendingTopInset: CGFloat = 0
+        var lastLoadedArticleLink: String?
+        var lastLoadedContentID: String?
         var lastLoadedHTML: String = ""
         var lastLoadedFilePath: String?
 
-        init(collapseProgress: Binding<CGFloat>, readingProgress: Binding<CGFloat>) {
-            _collapseProgress = collapseProgress
-            _readingProgress = readingProgress
+        init(scrollState: FeedDetailScrollState,
+             onSwipeLeft: @escaping () -> Void,
+             onSwipeRight: @escaping () -> Void) {
+            self.scrollState = scrollState
+            self.onSwipeLeft = onSwipeLeft
+            self.onSwipeRight = onSwipeRight
+        }
+
+        func configureGestureRecognizers(for webView: WKWebView) {
+            guard !didInstallSwipeRecognizers else { return }
+            didInstallSwipeRecognizers = true
+
+            for direction in [UISwipeGestureRecognizer.Direction.left, .right] {
+                let recognizer = UISwipeGestureRecognizer(target: self, action: #selector(handleArticleSwipe(_:)))
+                recognizer.direction = direction
+                recognizer.delegate = self
+                webView.addGestureRecognizer(recognizer)
+            }
+        }
+
+        @objc private func handleArticleSwipe(_ recognizer: UISwipeGestureRecognizer) {
+            switch recognizer.direction {
+            case .left:
+                onSwipeLeft()
+            case .right:
+                onSwipeRight()
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            true
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            updateScrollProgress(in: scrollView, force: false)
+        }
+
+        func scrollViewDidEndDragging(
+            _ scrollView: UIScrollView,
+            willDecelerate decelerate: Bool
+        ) {
+            if !decelerate {
+                updateScrollProgress(in: scrollView, force: true)
+            }
+        }
+
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+            updateScrollProgress(in: scrollView, force: true)
+        }
+
+        func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+            updateScrollProgress(in: scrollView, force: true)
+        }
+
+        private func updateScrollProgress(in scrollView: UIScrollView, force: Bool) {
+            let now = CACurrentMediaTime()
+            guard force || now - lastProgressUpdateTime >= minimumUpdateInterval else {
+                return
+            }
+            lastProgressUpdateTime = now
+
             let currentOffset = scrollView.contentOffset.y
             let topInset = scrollView.adjustedContentInset.top
             let bottomInset = scrollView.adjustedContentInset.bottom
@@ -1350,19 +2343,21 @@ struct WebView: UIViewRepresentable {
             let clampedOffsetY = min(max(currentOffset, minOffsetY), maxOffsetY)
             let scrollDistanceFromTop = max(0, clampedOffsetY - minOffsetY)
             let shouldUpdateChrome = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
-            let progress = min(1, scrollDistanceFromTop / collapseRange)
+            let progress = FeedDetailLayout.clampedProgress(
+                scrollDistanceFromTop / FeedDetailLayout.headerCollapseRange
+            )
 
             // Header chrome should follow user-driven scroll, while reading progress
             // also needs to track WebKit layout and programmatic offset updates.
-            if shouldUpdateChrome && abs(progress - collapseProgress) > progressUpdateThreshold {
+            if shouldUpdateChrome
+                && (force || abs(progress - scrollState.collapseProgress) > collapseUpdateThreshold) {
                 updateCollapseProgress(progress)
             }
-
             let scrollableDistance = max(0, maxOffsetY - minOffsetY)
             let clamped = scrollableDistance > 0
-                ? max(0, min(1, (clampedOffsetY - minOffsetY) / scrollableDistance))
+                ? FeedDetailLayout.clampedProgress((clampedOffsetY - minOffsetY) / scrollableDistance)
                 : 1
-            if abs(clamped - readingProgress) > progressUpdateThreshold {
+            if force || abs(clamped - scrollState.readingProgress) > readingUpdateThreshold {
                 updateReadingProgress(clamped)
             }
         }
@@ -1371,15 +2366,48 @@ struct WebView: UIViewRepresentable {
             updateCollapseProgress(0)
             updateReadingProgress(0)
         }
-       
+
+        func prepareForContentLoad(in scrollView: UIScrollView,
+                                   topInset: CGFloat,
+                                   animated: Bool) {
+            pendingTopReset = true
+            pendingTopInset = max(0, topInset)
+            enforceTopPosition(in: scrollView, animated: animated)
+        }
+
+        private func enforceTopPosition(in scrollView: UIScrollView, animated: Bool) {
+            scrollView.contentInset.top = pendingTopInset
+            var indicatorInsets = scrollView.verticalScrollIndicatorInsets
+            indicatorInsets.top = pendingTopInset
+            scrollView.verticalScrollIndicatorInsets = indicatorInsets
+
+            let minimumOffsetY = -scrollView.adjustedContentInset.top
+            scrollView.setContentOffset(
+                CGPoint(x: scrollView.contentOffset.x, y: minimumOffsetY),
+                animated: animated
+            )
+            resetScrollState()
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard pendingTopReset else { return }
+            pendingTopReset = false
+            enforceTopPosition(in: webView.scrollView, animated: false)
+
+            DispatchQueue.main.async { [weak self, weak webView] in
+                guard let self, let webView else { return }
+                self.enforceTopPosition(in: webView.scrollView, animated: false)
+            }
+        }
+
         private func updateCollapseProgress(_ newValue: CGFloat) {
-            if collapseProgress != newValue {
-                collapseProgress = newValue
+            if scrollState.collapseProgress != newValue {
+                scrollState.collapseProgress = newValue
             }
         }
         private func updateReadingProgress(_ newValue: CGFloat) {
-            if readingProgress != newValue {
-                readingProgress = newValue
+            if scrollState.readingProgress != newValue {
+                scrollState.readingProgress = newValue
             }
         }
 
@@ -1405,7 +2433,7 @@ struct ShareSheet: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) { }
 }
 
-private struct ArticleSummarySheet: View {
+private struct ArticleSummaryView: View {
     private static let summaryCache: NSCache<NSString, NSString> = {
         let cache = NSCache<NSString, NSString>()
         cache.countLimit = 128
@@ -1413,13 +2441,31 @@ private struct ArticleSummarySheet: View {
     }()
 
     private static let summaryInstructions = """
-    Du erstellst praezise, gut lesbare Artikelzusammenfassungen fuer ein mobiles Sheet in einer RSS-App.
-    Antworte immer auf Deutsch.
-    Gib nur separate Stichpunkte zurueck, pro Zeile genau einen Punkt.
-    Keine Ueberschrift, keine Einleitung, keine Nummerierung, kein Fazit und kein Markdown.
-    Formuliere konkret, natuerlich und ohne Fuellsaetze.
-    Nenne nur Informationen, die im Text klar belegt sind.
-    """
+Du erstellst praezise, vollstaendige Artikelzusammenfassungen fuer eine RSS-App.
+Antworte immer auf Deutsch.
+Gib nur separate Stichpunkte zurueck, pro Zeile genau einen Punkt.
+Keine Ueberschrift, keine Einleitung, keine Nummerierung, kein Fazit und kein Markdown.
+
+Jeder Stichpunkt muss ein vollstaendiger, grammatikalisch korrekter Satz sein.
+Keine Satzfragmente, keine elliptischen Formulierungen.
+
+Bewahre alle Zahlen, Daten, Namen, Orte, Zitate, Einheiten und Fakten exakt und unveraendert.
+Zahlen und Einheiten duerfen nicht getrennt oder umformuliert werden.
+Keine Aufsplittung von Informationen ueber mehrere Stichpunkte hinweg, wenn sie zusammengehoeren.
+Schliesse jeden Stichpunkt vollstaendig ab, bevor du den naechsten beginnst.
+Ein Datum wie "4. Juni 2026" muss immer in derselben Zeile stehen.
+Keine Zeile darf mit einer Praeposition, Konjunktion, einem offenen Zitat oder einem unvollstaendigen Namen enden.
+
+Rechtschreibung und Grammatik muessen korrekt sein.
+Falls der Quelltext sprachliche Fehler enthaelt, wird der Satz korrekt formuliert, ohne den Inhalt zu veraendern.
+
+Trenne Tatsachen, Aussagen von Personen und Prognosen klar sprachlich.
+Erfinde keine Zusammenhaenge und nutze den Titel nicht als Beleg.
+Nenne ausschliesslich Informationen, die im Artikeltext klar belegt sind.
+Vermeide Wiederholungen, Wertungen, Fuellsaetze und allgemeine Aussagen ohne Informationswert.
+
+Jeder Stichpunkt soll in sich vollstaendig, lesbar und direkt verstandlich sein.
+"""
 
     private struct SummaryLayoutProfile {
         let sourceWordCount: Int
@@ -1427,9 +2473,6 @@ private struct ArticleSummarySheet: View {
         let bulletCount: Int
         let minWordsPerBullet: Int
         let maxWordsPerBullet: Int
-        let maxCharactersPerBullet: Int
-        let detentFraction: CGFloat
-        let coveragePercent: Int
     }
 
     private enum SummaryState {
@@ -1443,9 +2486,19 @@ private struct ArticleSummarySheet: View {
     let sourceText: String
     let link: String
     let feedColor: Color
+    let topInset: CGFloat
+    let dismissRequestID: Int
+    let regenerationRequestID: Int
+    let onGenerationStateChange: (Bool) -> Void
+    let onSharePayloadChange: (String?) -> Void
+    let onDismissAnimationComplete: () -> Void
     @EnvironmentObject private var store: ArticleStore
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var model = SystemLanguageModel.default
     @State private var summaryState: SummaryState = .loading
+    @State private var isRefreshing = false
+    @State private var visibleBulletCount = 0
+    @State private var isConcealingBullets = false
 
     private var sharePayload: String? {
         guard case .ready(let bullets) = summaryState else { return nil }
@@ -1468,65 +2521,39 @@ private struct ArticleSummarySheet: View {
         Self.sourceSignature(for: preparedSourceText)
     }
 
-    private var summaryDetent: PresentationDetent {
-        .fraction(summaryLayout.detentFraction)
-    }
-
-    private var summaryCoverageLabel: String {
-        "Ca. \(summaryLayout.coveragePercent)% des Artikels"
+    private var isGenerating: Bool {
+        if case .loading = summaryState {
+            return true
+        }
+        return false
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack(alignment: .topLeading) {
-                LinearGradient(
-                    colors: [
-                        feedColor.opacity(0.15),
-                        feedColor.opacity(0.06),
-                        Color(.systemBackground)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-                .ignoresSafeArea()
-
-                VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.large) {
-                    summaryContent
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, UIStylePolicy.Spacing.large)
+        VStack(spacing: 0) {
+            summaryContent
+                .padding(.horizontal, UIStylePolicy.Spacing.xLarge)
                 .padding(.top, UIStylePolicy.Spacing.large)
-                .padding(.bottom, UIStylePolicy.Spacing.medium)
-            }
-            .navigationTitle(title)
-            .navigationSubtitle("Zusammenfassung mit Apple Intelligence")
-            .navigationBarTitleDisplayMode(.inline)
-            .presentationDetents([summaryDetent])
-            .presentationDragIndicator(.visible)
-            .task(id: generationTaskID) {
-                await generateSummaryIfNeeded()
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    if let sharePayload {
-                        ShareLink(item: sharePayload) {
-                            Image(systemName: "square.and.arrow.up")
-                                .fontWeight(.light)
-                                .foregroundStyle(feedColor)
-                        }
-                        .accessibilityLabel("Zusammenfassung teilen")
-                    } else {
-                        Button(action: {}) {
-                            Image(systemName: "square.and.arrow.up")
-                                .fontWeight(.light)
-                                .foregroundStyle(UIStylePolicy.neutralIcon)
-                        }
-                        .disabled(true)
-                        .accessibilityLabel("Zusammenfassung teilen")
-                    }
-                }
-            }
+                .padding(.bottom, UIStylePolicy.Spacing.xLarge)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .padding(.top, topInset)
+        .task(id: generationTaskID) {
+            await generateSummaryIfNeeded()
+        }
+        .task(id: dismissRequestID) {
+            guard dismissRequestID > 0 else { return }
+            await concealSummaryContent()
+        }
+        .task(id: regenerationRequestID) {
+            guard regenerationRequestID > 0 else { return }
+            await regenerateSummary()
+        }
+        .onChange(of: isGenerating, initial: true) { _, newValue in
+            onGenerationStateChange(newValue)
+        }
+        .onChange(of: sharePayload, initial: true) { _, newValue in
+            onSharePayloadChange(newValue)
         }
     }
 
@@ -1538,48 +2565,55 @@ private struct ArticleSummarySheet: View {
     private var summaryContent: some View {
         switch summaryState {
         case .loading:
-            summaryCard {
-                Label("Apple Intelligence erstellt die Zusammenfassung lokal.", systemImage: "sparkles")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
+            VStack(spacing: UIStylePolicy.Spacing.medium) {
                 ProgressView()
+                    .controlSize(.large)
                     .tint(feedColor)
-                Text("Erstelle längere Zusammenfassung …")
-                    .font(.system(size: 18, weight: .medium, design: .rounded))
-                    .foregroundStyle(.primary)
-                Text("Die Ausgabe wird lokal auf dem Gerät generiert.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        case .ready(let bullets):
-            VStack(alignment: .leading, spacing: UIStylePolicy.Spacing.medium) {
-                summaryCard {
-                    HStack(alignment: .center, spacing: UIStylePolicy.Spacing.small) {
-                        Label("Lokal gespeichert", systemImage: "checkmark.circle.fill")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        Spacer(minLength: 8)
-                        Text(summaryCoverageLabel)
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(feedColor)
-                    }
 
-                    ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
-                        HStack(alignment: .top, spacing: UIStylePolicy.Spacing.medium) {
-                            Circle()
-                                .fill(feedColor)
-                                .frame(width: 8, height: 8)
-                                .padding(.top, 8)
+                Text(isRefreshing ? "Wird aktualisiert" : "Artikel wird ausgewertet")
+                    .font(.subheadline.weight(.semibold))
+                    .multilineTextAlignment(.center)
+
+                Text("Die Zusammenfassung wird lokal erstellt.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .ready(let bullets):
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(bullets.enumerated()), id: \.offset) { index, bullet in
+                        HStack(alignment: .firstTextBaseline, spacing: UIStylePolicy.Spacing.large) {
+                            Text(String(format: "%02d", index + 1))
+                                .font(.caption2.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(feedColor)
+                                .frame(width: 22, alignment: .leading)
+
                             Text(bullet)
-                                .font(.system(size: 18, weight: .medium, design: .rounded))
-                                .foregroundStyle(.primary)
-                                .lineSpacing(3)
+                                .font(AppTypography.secondary)
+                                .foregroundStyle(.primary.opacity(0.92))
+                                .lineSpacing(5)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, UIStylePolicy.Spacing.large)
+                        .opacity(index < visibleBulletCount ? 1 : 0)
+                        .offset(y: index < visibleBulletCount ? 0 : -10)
+
+                        if index < bullets.count - 1 {
+                            Divider()
+                                .padding(.leading, 22 + UIStylePolicy.Spacing.large)
+                                .opacity(index < visibleBulletCount ? 0.45 : 0)
                         }
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .textSelection(.enabled)
+            .task(id: bulletRevealID(for: bullets)) {
+                await revealBullets(count: bullets.count)
+            }
         case .unavailable(let message):
             summaryStatusView(
                 iconName: "sparkles.slash",
@@ -1609,7 +2643,7 @@ private struct ArticleSummarySheet: View {
                 Text(sourcePreview)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                    .lineLimit(7)
+                    .lineLimit(5)
             }
         }
     }
@@ -1623,6 +2657,50 @@ private struct ArticleSummarySheet: View {
         return String(prepared.prefix(420)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
+    private func bulletRevealID(for bullets: [String]) -> String {
+        "\(generationTaskID)|\(bullets.joined(separator: "|").hashValue)"
+    }
+
+    @MainActor
+    private func revealBullets(count: Int) async {
+        isConcealingBullets = false
+        visibleBulletCount = accessibilityReduceMotion ? count : 0
+        guard !accessibilityReduceMotion else { return }
+
+        for index in 0..<count {
+            guard !Task.isCancelled, !isConcealingBullets else { return }
+            if index > 0 {
+                try? await Task.sleep(for: .milliseconds(105))
+            }
+            guard !Task.isCancelled, !isConcealingBullets else { return }
+            withAnimation(.smooth(duration: 0.32)) {
+                visibleBulletCount = index + 1
+            }
+        }
+    }
+
+    @MainActor
+    private func concealSummaryContent() async {
+        isConcealingBullets = true
+
+        guard case .ready = summaryState, !accessibilityReduceMotion else {
+            visibleBulletCount = 0
+            onDismissAnimationComplete()
+            return
+        }
+
+        while visibleBulletCount > 0 {
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeIn(duration: 0.22)) {
+                visibleBulletCount -= 1
+            }
+            try? await Task.sleep(for: .milliseconds(85))
+        }
+
+        guard !Task.isCancelled else { return }
+        onDismissAnimationComplete()
+    }
+
     @MainActor
     private func generateSummaryIfNeeded() async {
         let preparedSource = preparedSourceText
@@ -1634,7 +2712,7 @@ private struct ArticleSummarySheet: View {
         let cacheKey = Self.cacheKey(link: link, sourceSignature: sourceSignature)
         if let cached = Self.summaryCache.object(forKey: cacheKey) {
             let bullets = Self.normalizedBullets(from: cached as String, layout: summaryLayout)
-            if !bullets.isEmpty {
+            if Self.isCompleteSummary(bullets, layout: summaryLayout) {
                 summaryState = .ready(bullets)
                 return
             }
@@ -1642,7 +2720,7 @@ private struct ArticleSummarySheet: View {
 
         if let persistedSummary = store.summary(articleID: link, matching: sourceSignature) {
             let bullets = Self.normalizedBullets(from: persistedSummary, layout: summaryLayout)
-            if !bullets.isEmpty {
+            if Self.isCompleteSummary(bullets, layout: summaryLayout) {
                 Self.summaryCache.setObject(persistedSummary as NSString, forKey: cacheKey)
                 summaryState = .ready(bullets)
                 return
@@ -1664,19 +2742,15 @@ private struct ArticleSummarySheet: View {
                 model: model,
                 instructions: Self.summaryInstructions
             )
-            let response = try await session.respond(
-                to: Self.summaryPrompt(title: title, sourceText: preparedSource, layout: summaryLayout),
-                options: GenerationOptions(
-                    temperature: 0.2,
-                    maximumResponseTokens: 160
-                )
+            let bullets = try await generateValidatedBullets(
+                using: session,
+                preparedSource: preparedSource
             )
 
             guard !Task.isCancelled else { return }
 
-            let bullets = Self.normalizedBullets(from: response.content, layout: summaryLayout)
             guard !bullets.isEmpty else {
-                summaryState = .failed("Die Zusammenfassung konnte nicht in ein kompaktes Format gebracht werden.")
+                summaryState = .failed("Die Zusammenfassung war unvollständig. Bitte versuche es erneut.")
                 return
             }
 
@@ -1684,13 +2758,123 @@ private struct ArticleSummarySheet: View {
             Self.summaryCache.setObject(persistedSummary as NSString, forKey: cacheKey)
             store.saveSummary(persistedSummary, articleID: link, sourceSignature: sourceSignature)
             summaryState = .ready(bullets)
+            isRefreshing = false
         } catch let error as LanguageModelSession.GenerationError {
             guard !Task.isCancelled else { return }
             summaryState = .failed(Self.message(for: error))
+            isRefreshing = false
         } catch {
             guard !Task.isCancelled else { return }
             summaryState = .failed("Die Zusammenfassung konnte gerade nicht erstellt werden.")
+            isRefreshing = false
         }
+    }
+
+    @MainActor
+    private func regenerateSummary() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        summaryState = .loading
+
+        let cacheKey = Self.cacheKey(link: link, sourceSignature: sourceSignature)
+        Self.summaryCache.removeObject(forKey: cacheKey)
+        await generateFreshSummary()
+    }
+
+    @MainActor
+    private func generateFreshSummary() async {
+        let preparedSource = preparedSourceText
+        guard !preparedSource.isEmpty else {
+            isRefreshing = false
+            summaryState = .failed("Für diesen Artikel ist nicht genug Text für eine Zusammenfassung verfügbar.")
+            return
+        }
+
+        switch model.availability {
+        case .available:
+            break
+        case .unavailable(let reason):
+            isRefreshing = false
+            summaryState = .unavailable(Self.message(for: reason))
+            return
+        }
+
+        do {
+            let session = LanguageModelSession(model: model, instructions: Self.summaryInstructions)
+            let bullets = try await generateValidatedBullets(
+                using: session,
+                preparedSource: preparedSource
+            )
+            guard !Task.isCancelled else { return }
+
+            guard !bullets.isEmpty else {
+                isRefreshing = false
+                summaryState = .failed("Die Zusammenfassung war unvollständig. Bitte versuche es erneut.")
+                return
+            }
+
+            let persistedSummary = bullets.joined(separator: "\n")
+            let cacheKey = Self.cacheKey(link: link, sourceSignature: sourceSignature)
+            Self.summaryCache.setObject(persistedSummary as NSString, forKey: cacheKey)
+            store.saveSummary(persistedSummary, articleID: link, sourceSignature: sourceSignature)
+            isRefreshing = false
+            summaryState = .ready(bullets)
+        } catch let error as LanguageModelSession.GenerationError {
+            guard !Task.isCancelled else { return }
+            isRefreshing = false
+            summaryState = .failed(Self.message(for: error))
+        } catch {
+            guard !Task.isCancelled else { return }
+            isRefreshing = false
+            summaryState = .failed("Die Zusammenfassung konnte gerade nicht erstellt werden.")
+        }
+    }
+
+    @MainActor
+    private func generateValidatedBullets(
+        using session: LanguageModelSession,
+        preparedSource: String
+    ) async throws -> [String] {
+        let basePrompt = Self.summaryPrompt(
+            title: title,
+            sourceText: preparedSource,
+            layout: summaryLayout
+        )
+        var bestUsableBullets: [String] = []
+
+        for attempt in 0..<2 {
+            let prompt: String
+            if attempt == 0 {
+                prompt = basePrompt
+            } else {
+                prompt = """
+                Die vorherige Ausgabe enthielt getrennte oder unvollstaendige Saetze.
+                Erstelle die Zusammenfassung erneut und beende ausnahmslos jede Zeile vollstaendig.
+
+                \(basePrompt)
+                """
+            }
+
+            let response = try await session.respond(
+                to: prompt,
+                options: GenerationOptions(temperature: 0.1, maximumResponseTokens: 520)
+            )
+            guard !Task.isCancelled else { return [] }
+
+            let bullets = Self.normalizedBullets(from: response.content, layout: summaryLayout)
+            if Self.meetsTargetSummary(bullets, layout: summaryLayout) {
+                return bullets
+            }
+
+            let completeBullets = bullets.filter {
+                Self.isCompleteBullet($0, layout: summaryLayout)
+            }
+            if completeBullets.count > bestUsableBullets.count {
+                bestUsableBullets = completeBullets
+            }
+        }
+
+        return bestUsableBullets.count >= 3 ? bestUsableBullets : []
     }
 
     private nonisolated static func cacheKey(link: String, sourceSignature: String) -> NSString {
@@ -1699,31 +2883,34 @@ private struct ArticleSummarySheet: View {
 
     private nonisolated static func preparedSourceText(from sourceText: String) -> String {
         let normalized = HTMLText.normalizePreviewSpacing(in: sourceText)
-        return String(normalized.prefix(12_000))
+        return String(normalized.prefix(20_000))
     }
 
     private nonisolated static func sourceSignature(for sourceText: String) -> String {
-        let digest = SHA256.hash(data: Data(("summary-v2|" + sourceText).utf8))
+        let digest = SHA256.hash(data: Data(("summary-v4|" + sourceText).utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     private nonisolated static func summaryLayoutProfile(for sourceText: String) -> SummaryLayoutProfile {
         let wordCount = max(1, sourceText.split(whereSeparator: \.isWhitespace).count)
-        let proportionalWordCount = Int((Double(wordCount) * 0.14).rounded())
-        let targetWordCount = min(76, max(48, proportionalWordCount))
-        let bulletCount = targetWordCount >= 64 ? 4 : 3
+        let proportionalWordCount = Int((Double(wordCount) * 0.20).rounded())
+        let targetWordCount = min(170, max(90, proportionalWordCount))
+        let bulletCount: Int
+        if targetWordCount >= 145 {
+            bulletCount = 7
+        } else if targetWordCount >= 115 {
+            bulletCount = 6
+        } else {
+            bulletCount = 5
+        }
         let averageWordsPerBullet = Int(ceil(Double(targetWordCount) / Double(bulletCount)))
-        let coveragePercent = min(35, max(8, Int((Double(targetWordCount) / Double(wordCount) * 100).rounded())))
 
         return SummaryLayoutProfile(
             sourceWordCount: wordCount,
             targetWordCount: targetWordCount,
             bulletCount: bulletCount,
-            minWordsPerBullet: max(12, averageWordsPerBullet - 2),
-            maxWordsPerBullet: min(20, averageWordsPerBullet + 2),
-            maxCharactersPerBullet: bulletCount == 4 ? 150 : 170,
-            detentFraction: bulletCount == 4 ? 0.58 : 0.54,
-            coveragePercent: coveragePercent
+            minWordsPerBullet: max(15, averageWordsPerBullet - 4),
+            maxWordsPerBullet: min(30, averageWordsPerBullet + 5)
         )
     }
 
@@ -1731,11 +2918,15 @@ private struct ArticleSummarySheet: View {
         """
         Erstelle eine gut lesbare, mobile Artikelzusammenfassung.
         Gib exakt \(layout.bulletCount) Zeilen aus.
-        Zielumfang: insgesamt ungefaehr \(layout.targetWordCount) Woerter, also etwa \(layout.coveragePercent)% des Artikels.
+        Zielumfang: insgesamt mindestens \(layout.targetWordCount) und hoechstens \(layout.targetWordCount + 25) Woerter.
         Jede Zeile soll ungefaehr \(layout.minWordsPerBullet)-\(layout.maxWordsPerBullet) Woerter haben.
-        Verteile die wichtigsten Informationen ueber alle Zeilen. Keine Zeile darf leer sein.
+        Ordne nach Relevanz: zentrale Nachricht zuerst, danach Ursachen, wichtige Details, Zahlen, Reaktionen und Folgen.
+        Beruecksichtige Gegenpositionen oder Unsicherheiten, wenn der Text sie nennt.
+        Wiederhole weder Titel noch dieselbe Aussage in anderer Form.
+        Keine Zeile darf leer sein.
+        Beende jede Zeile als vollstaendigen Satz. Trenne niemals ein Datum, einen Namen oder ein Zitat auf zwei Zeilen.
 
-        Titel: \(title)
+        Titel (nur Kontext, kein Beleg): \(title)
 
         Artikeltext:
         \(sourceText)
@@ -1743,43 +2934,132 @@ private struct ArticleSummarySheet: View {
     }
 
     private nonisolated static func normalizedBullets(from response: String, layout: SummaryLayoutProfile) -> [String] {
-        let normalizedResponse = HTMLText.normalizePreviewSpacing(
-            in: response.replacingOccurrences(of: "\r\n", with: "\n")
+        let normalizedResponse = response
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: .newlines)
+            .map { HTMLText.normalizePreviewSpacing(in: $0) }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let lineBullets = Self.repairedBulletLines(
+            normalizedResponse
+            .components(separatedBy: .newlines)
+            .map(Self.cleanBulletLine)
+            .filter { !$0.isEmpty }
         )
 
-        let lineBullets = normalizedResponse
-            .components(separatedBy: .newlines)
-            .map { Self.cleanBulletLine($0, maxCharacters: layout.maxCharactersPerBullet) }
-            .filter { !$0.isEmpty }
-
-        if lineBullets.count >= 2 {
+        if lineBullets.count >= max(3, layout.bulletCount - 1) {
             return Array(lineBullets.prefix(layout.bulletCount))
         }
 
-        let sentenceBullets = normalizedResponse
+        let sentenceBullets = Self.repairedBulletLines(
+            normalizedResponse
             .replacingOccurrences(of: "(?<=[.!?])\\s+", with: "\n", options: .regularExpression)
             .components(separatedBy: .newlines)
-            .map { Self.cleanBulletLine($0, maxCharacters: layout.maxCharactersPerBullet) }
+            .map(Self.cleanBulletLine)
             .filter { !$0.isEmpty }
+        )
 
         return Array(sentenceBullets.prefix(layout.bulletCount))
     }
 
-    private nonisolated static func cleanBulletLine(_ rawLine: String, maxCharacters: Int) -> String {
+    private nonisolated static func repairedBulletLines(_ lines: [String]) -> [String] {
+        var repaired: [String] = []
+
+        for line in lines {
+            guard let previous = repaired.last else {
+                repaired.append(line)
+                continue
+            }
+
+            if shouldJoin(previous: previous, continuation: line) {
+                repaired[repaired.count - 1] = HTMLText.normalizePreviewSpacing(
+                    in: previous + " " + line
+                )
+            } else {
+                repaired.append(line)
+            }
+        }
+
+        return repaired
+    }
+
+    private nonisolated static func shouldJoin(previous: String, continuation: String) -> Bool {
+        guard !previous.isEmpty, !continuation.isEmpty else { return false }
+
+        if previous.range(
+            of: #"\b\d{1,2}\.$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil,
+           continuation.range(
+            of: #"^(?:Januar|Februar|Maerz|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)\b"#,
+            options: [.regularExpression, .caseInsensitive]
+           ) != nil {
+            return true
+        }
+
+        guard let lastCharacter = previous.last else { return false }
+        if !".!?…".contains(lastCharacter) {
+            return true
+        }
+
+        return continuation.first?.isLowercase == true
+    }
+
+    private nonisolated static func isCompleteSummary(
+        _ bullets: [String],
+        layout: SummaryLayoutProfile
+    ) -> Bool {
+        guard bullets.count >= 3 else { return false }
+        return bullets.allSatisfy { isCompleteBullet($0, layout: layout) }
+    }
+
+    private nonisolated static func meetsTargetSummary(
+        _ bullets: [String],
+        layout: SummaryLayoutProfile
+    ) -> Bool {
+        guard bullets.count >= max(3, layout.bulletCount - 1) else { return false }
+        return bullets.allSatisfy { isCompleteBullet($0, layout: layout) }
+    }
+
+    private nonisolated static func isCompleteBullet(
+        _ bullet: String,
+        layout: SummaryLayoutProfile
+    ) -> Bool {
+        let trimmed = bullet.trimmingCharacters(in: .whitespacesAndNewlines)
+        let wordCount = trimmed.split(whereSeparator: \.isWhitespace).count
+        guard wordCount >= max(6, layout.minWordsPerBullet / 2) else { return false }
+
+        let closingCharacters = CharacterSet(charactersIn: "\"'”’»)]}")
+        let sentence = trimmed.trimmingCharacters(in: closingCharacters)
+        guard let finalCharacter = sentence.last, ".!?…".contains(finalCharacter) else {
+            return false
+        }
+
+        let danglingPatterns = [
+            #"\b(?:v|vs)\.$"#,
+            #"[,:;\-–—]\s*$"#,
+            #"[\"'„“‚‘]\s*$"#,
+            #"\b(?:und|oder|aber|sowie|weil|dass|mit|von|fuer|für|gegen|durch|als|bei|zu)\s*[.!?…]$"#
+        ]
+
+        return !danglingPatterns.contains { pattern in
+            sentence.range(
+                of: pattern,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
+        }
+    }
+
+    private nonisolated static func cleanBulletLine(_ rawLine: String) -> String {
         let withoutMarkers = rawLine.replacingOccurrences(
             of: #"^\s*(?:[-•*]|\d+[.)]|Zusammenfassung:|Summary:)\s*"#,
             with: "",
             options: [.regularExpression, .caseInsensitive]
         )
         let normalized = HTMLText.normalizePreviewSpacing(in: withoutMarkers)
-        guard !normalized.isEmpty else { return "" }
-        guard normalized.count > maxCharacters else { return normalized }
-
-        let trimmedPrefix = String(normalized.prefix(max(1, maxCharacters - 3)))
-        if let lastSpace = trimmedPrefix.lastIndex(of: " ") {
-            return String(trimmedPrefix[..<lastSpace]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
-        }
-        return trimmedPrefix + "…"
+        return normalized
     }
 
     private func summaryCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -1789,23 +3069,12 @@ private struct ArticleSummarySheet: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(.secondarySystemGroupedBackground))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(
-                            LinearGradient(
-                                colors: [
-                                    feedColor.opacity(0.34),
-                                    Color.white.opacity(0.14)
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 1
-                        )
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(feedColor.opacity(0.16), lineWidth: 1)
                 }
-                .shadow(color: feedColor.opacity(0.14), radius: 20, y: 10)
         }
     }
 

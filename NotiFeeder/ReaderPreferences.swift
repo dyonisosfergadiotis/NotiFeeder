@@ -46,10 +46,25 @@ struct ReaderSettingsPanel: View {
     @Binding var fontScale: Double
     @Binding var fontFamily: String
     @Binding var lineSpacing: Double
+    @Binding var paragraphSpacing: Double
+    @Binding var contentWidth: Double
+    @Binding var mediaWidth: Double
     @Binding var feedColor: Color
+    @State private var showsAdvancedTextOptions = false
 
     private var fontGridColumns: [GridItem] {
         [GridItem(.adaptive(minimum: 110), spacing: 10)]
+    }
+
+    private var lineSpacingLabel: String {
+        switch lineSpacing {
+        case ..<1.3:
+            return "Kompakt"
+        case 1.3..<1.46:
+            return "Standard"
+        default:
+            return "Weit"
+        }
     }
 
     var body: some View {
@@ -66,18 +81,6 @@ struct ReaderSettingsPanel: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                
-                Section("Zeilenabstand") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Slider(value: $lineSpacing, in: 0.75...1.5, step: 0.05) {
-                            Text("Zeilenabstand")
-                        }
-                        .tint(feedColor)
-                        Text(String(format: "%.2f", lineSpacing) + " pt")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
 
                 Section("Ausrichtung") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -88,9 +91,7 @@ struct ReaderSettingsPanel: View {
                             Text("Blocksatz").tag("justified")
                         }
                         .pickerStyle(.segmented)
-                        .tint(.accentColor)
-                        
-                        // Helper description
+                        .tint(UIStylePolicy.Brand.fallbackAccent)
                     }
                 }
 
@@ -122,7 +123,50 @@ struct ReaderSettingsPanel: View {
                     }
                 }
 
-                
+                Section {
+                    DisclosureGroup("Weitere Textoptionen", isExpanded: $showsAdvancedTextOptions) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("Zeilenhöhe")
+                                Spacer()
+                                Text(lineSpacingLabel)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Slider(value: $lineSpacing, in: 0.75...1.5, step: 0.05)
+                                .tint(feedColor)
+                                .accessibilityLabel("Zeilenhöhe")
+                                .accessibilityValue(lineSpacingLabel)
+
+                            Divider()
+
+                            readerSlider(
+                                title: "Absatzabstand",
+                                value: $paragraphSpacing,
+                                range: 0.35...1.25,
+                                step: 0.05,
+                                valueLabel: "\(Int(paragraphSpacing * 100)) %"
+                            )
+
+                            readerSlider(
+                                title: "Textbreite",
+                                value: $contentWidth,
+                                range: 520...900,
+                                step: 20,
+                                valueLabel: contentWidth < 650 ? "Schmal" : contentWidth < 790 ? "Standard" : "Breit"
+                            )
+
+                            readerSlider(
+                                title: "Mediengröße",
+                                value: $mediaWidth,
+                                range: 60...100,
+                                step: 5,
+                                valueLabel: "\(Int(mediaWidth)) %"
+                            )
+                        }
+                        .padding(.top, 8)
+                    }
+                }
             }
             .navigationTitle("Reader Einstellungen")
             .navigationBarTitleDisplayMode(.inline)
@@ -132,4 +176,24 @@ struct ReaderSettingsPanel: View {
         .presentationDragIndicator(.visible)
     }
 
+    private func readerSlider(
+        title: String,
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double,
+        valueLabel: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(valueLabel)
+                    .foregroundStyle(.secondary)
+            }
+            Slider(value: value, in: range, step: step)
+                .tint(feedColor)
+                .accessibilityLabel(title)
+                .accessibilityValue(valueLabel)
+        }
+    }
 }

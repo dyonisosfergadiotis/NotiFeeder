@@ -12,6 +12,7 @@ private enum WatchSyncConstants {
     static let openLink = "link"
     static let refresh = "refresh"
     static let open = "open"
+    static let bookmark = "bookmark"
     static let cachedSnapshot = "watch.cached.snapshot"
 }
 
@@ -37,9 +38,7 @@ final class WatchSyncStore: NSObject, ObservableObject {
 
     var entries: [WatchFeedEntry] {
         guard let snapshot else { return [] }
-        return snapshot.entries.sorted { lhs, rhs in
-            (lhs.parsedDate ?? .distantPast) > (rhs.parsedDate ?? .distantPast)
-        }
+        return Self.sortedEntries(snapshot.entries)
     }
 
     var lastRefreshText: String {
@@ -118,6 +117,29 @@ final class WatchSyncStore: NSObject, ObservableObject {
         }
     }
 
+    func toggleBookmark(for entry: WatchFeedEntry) {
+        guard WCSession.isSupported() else { return }
+        updateBookmarkLocally(link: entry.link)
+
+        let payload: [String: Any] = [
+            WatchSyncConstants.requestType: WatchSyncConstants.bookmark,
+            WatchSyncConstants.openLink: entry.link
+        ]
+
+        let session = WCSession.default
+        if session.isReachable {
+            session.sendMessage(payload, replyHandler: nil, errorHandler: { [weak self] _ in
+                session.transferUserInfo(payload)
+                Task { @MainActor in
+                    self?.statusText = "Lesezeichen ans iPhone gesendet"
+                }
+            })
+        } else {
+            session.transferUserInfo(payload)
+            statusText = "Lesezeichen ans iPhone gesendet"
+        }
+    }
+
     private func restoreCachedSnapshot() {
         guard let data = defaults.data(forKey: WatchSyncConstants.cachedSnapshot) else { return }
         consumeSnapshotData(data)
@@ -131,6 +153,34 @@ final class WatchSyncStore: NSObject, ObservableObject {
         #if canImport(WidgetKit)
         WidgetCenter.shared.reloadAllTimelines()
         #endif
+    }
+
+    private func updateBookmarkLocally(link: String) {
+        guard let snapshot,
+              let index = snapshot.entries.firstIndex(where: { $0.link == link }) else {
+            return
+        }
+        var entries = snapshot.entries
+        entries[index] = entries[index].toggledBookmark()
+        let updated = WatchFeedSnapshot(
+            generatedAt: snapshot.generatedAt,
+            lastRefreshDate: snapshot.lastRefreshDate,
+            feeds: snapshot.feeds,
+            entries: entries
+        )
+        self.snapshot = updated
+        if let data = try? JSONEncoder.watchSnapshotEncoder.encode(updated) {
+            defaults.set(data, forKey: WatchSyncConstants.cachedSnapshot)
+        }
+    }
+
+    private static func sortedEntries(_ entries: [WatchFeedEntry]) -> [WatchFeedEntry] {
+        entries.sorted { lhs, rhs in
+            if lhs.watchPriority != rhs.watchPriority {
+                return lhs.watchPriority > rhs.watchPriority
+            }
+            return (lhs.parsedDate ?? .distantPast) > (rhs.parsedDate ?? .distantPast)
+        }
     }
 }
 
@@ -168,4 +218,12 @@ extension WatchSyncStore: WCSessionDelegate {
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {}
     nonisolated func sessionDidDeactivate(_ session: WCSession) {}
 #endif
+}
+
+private extension JSONEncoder {
+    static var watchSnapshotEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
 }

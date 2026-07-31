@@ -2,19 +2,27 @@ import SwiftUI
 
 struct WatchContentView: View {
     @StateObject private var store = WatchSyncStore()
+    @State private var selectedFilter: WatchArticleFilter = .top
+    @State private var isFilterSheetPresented = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 10) {
-                    if store.entries.isEmpty {
+                    if filteredEntries.isEmpty {
                         emptyStateCard
                     } else {
-                        ForEach(store.entries) { entry in
+                        ForEach(filteredEntries) { entry in
                             NavigationLink {
-                                WatchArticleDetailView(entry: entry) {
-                                    store.openOnPhone(link: entry.link)
-                                }
+                                WatchArticleDetailView(
+                                    entry: entry,
+                                    toggleBookmark: {
+                                        store.toggleBookmark(for: entry)
+                                    },
+                                    openOnPhone: {
+                                        store.openOnPhone(link: entry.link)
+                                    }
+                                )
                             } label: {
                                 WatchArticleCard(entry: entry)
                             }
@@ -22,62 +30,80 @@ struct WatchContentView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 10)
-                .padding(.top, 6)
-                .padding(.bottom, 10)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 4)
+                .padding(.top, 4)
+                .padding(.bottom, 8)
             }
-            .navigationTitle("NotiFeeder")
+            .navigationTitle(unreadCounterTitle)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task {
-                            await store.requestRefresh()
-                        }
-                    } label: {
-                        if store.isRefreshing {
-                            ProgressView()
-                        } else {
-                            Image(systemName: "arrow.clockwise")
-                                .fontWeight(.light)
-                        }
-                    }
-                    .disabled(store.isRefreshing)
-                    .accessibilityLabel("Neu laden")
+                ToolbarItem(placement: .topBarLeading) {
+                    refreshButton
                 }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    filterButton
+                }
+            }
+            .sheet(isPresented: $isFilterSheetPresented) {
+                WatchFilterSheet(selectedFilter: $selectedFilter)
             }
             .refreshable {
                 await store.requestRefresh()
             }
-            .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 2) {
-                    Text(store.lastRefreshText)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+        }
+    }
 
-                    if let status = store.statusText, !status.isEmpty {
-                        Text(status)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                .multilineTextAlignment(.center)
-                .padding(.vertical, 4)
+    private var unreadCount: Int {
+        store.entries.filter { !$0.isRead }.count
+    }
+
+    private var unreadCounterTitle: String {
+        unreadCount == 1 ? "1 ungelesen" : "\(unreadCount) ungelesen"
+    }
+
+    private var filteredEntries: [WatchFeedEntry] {
+        selectedFilter.apply(to: store.entries)
+    }
+
+    private var refreshButton: some View {
+        Button {
+            Task {
+                await store.requestRefresh()
+            }
+        } label: {
+            if store.isRefreshing {
+                ProgressView()
+            } else {
+                Image(systemName: "arrow.clockwise")
+                    .fontWeight(.light)
             }
         }
+        .disabled(store.isRefreshing)
+        .accessibilityLabel("Neu laden")
+    }
+
+    private var filterButton: some View {
+        Button {
+            isFilterSheetPresented = true
+        } label: {
+            Image(systemName: selectedFilter.systemImage)
+                .fontWeight(.light)
+        }
+        .accessibilityLabel("Filter")
     }
 
     private var emptyStateCard: some View {
         VStack(spacing: 8) {
-            Image(systemName: "newspaper")
+            Image(systemName: selectedFilter.emptySystemImage)
                 .font(.title3)
                 .fontWeight(.light)
                 .foregroundStyle(.secondary)
 
-            Text("Keine Artikel")
+            Text(selectedFilter.emptyTitle)
                 .font(.headline)
 
-            Text("Sobald das iPhone synchronisiert, erscheinen hier Artikel.")
+            Text(selectedFilter.emptyMessage)
                 .font(.caption2)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -88,6 +114,131 @@ struct WatchContentView: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.gray.opacity(0.14))
         )
+    }
+}
+
+private struct WatchFilterSheet: View {
+    @Binding var selectedFilter: WatchArticleFilter
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 8) {
+                    ForEach(WatchArticleFilter.allCases) { filter in
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                selectedFilter = filter
+                            }
+                            dismiss()
+                        } label: {
+                            Label(
+                                filter.title,
+                                systemImage: selectedFilter == filter ? "checkmark.circle.fill" : filter.systemImage
+                            )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(selectedFilter == filter ? .accentColor : .secondary)
+                        .accessibilityLabel(filter.accessibilityLabel)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 8)
+            }
+            .navigationTitle("Filter")
+        }
+    }
+}
+
+private enum WatchArticleFilter: String, CaseIterable, Identifiable {
+    case top
+    case unread
+    case bookmarks
+    case today
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .top:
+            return "Top"
+        case .unread:
+            return "Ungelesen"
+        case .bookmarks:
+            return "Lesezeichen"
+        case .today:
+            return "Heute"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .top:
+            return "sparkle"
+        case .unread:
+            return "circle"
+        case .bookmarks:
+            return "bookmark"
+        case .today:
+            return "calendar"
+        }
+    }
+
+    var accessibilityLabel: String {
+        "\(title) anzeigen"
+    }
+
+    var emptySystemImage: String {
+        switch self {
+        case .top:
+            return "newspaper"
+        case .unread:
+            return "checkmark.circle"
+        case .bookmarks:
+            return "bookmark"
+        case .today:
+            return "calendar"
+        }
+    }
+
+    var emptyTitle: String {
+        switch self {
+        case .top:
+            return "Keine Artikel"
+        case .unread:
+            return "Alles gelesen"
+        case .bookmarks:
+            return "Keine Lesezeichen"
+        case .today:
+            return "Heute nichts Neues"
+        }
+    }
+
+    var emptyMessage: String {
+        switch self {
+        case .top:
+            return "Sobald das iPhone synchronisiert, erscheinen hier Artikel."
+        case .unread:
+            return "Ungelesene Artikel erscheinen hier nach der nächsten Synchronisierung."
+        case .bookmarks:
+            return "Gespeicherte Artikel erscheinen hier, sobald du ein Lesezeichen setzt."
+        case .today:
+            return "Artikel von heute erscheinen hier nach dem nächsten Feed-Refresh."
+        }
+    }
+
+    func apply(to entries: [WatchFeedEntry]) -> [WatchFeedEntry] {
+        switch self {
+        case .top:
+            return entries
+        case .unread:
+            return entries.filter { !$0.isRead }
+        case .bookmarks:
+            return entries.filter(\.isBookmarked)
+        case .today:
+            return entries.filter(\.isToday)
+        }
     }
 }
 
@@ -134,6 +285,13 @@ private struct WatchArticleCard: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+
+                if entry.isBookmarked {
+                    Image(systemName: "bookmark.fill")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(feedTint)
+                        .accessibilityLabel("Lesezeichen")
+                }
             }
 
             Text(entry.displayTitle)
@@ -165,7 +323,16 @@ private struct WatchArticleCard: View {
 
 private struct WatchArticleDetailView: View {
     let entry: WatchFeedEntry
+    let toggleBookmark: () -> Void
     let openOnPhone: () -> Void
+    @State private var isBookmarked: Bool
+
+    init(entry: WatchFeedEntry, toggleBookmark: @escaping () -> Void, openOnPhone: @escaping () -> Void) {
+        self.entry = entry
+        self.toggleBookmark = toggleBookmark
+        self.openOnPhone = openOnPhone
+        _isBookmarked = State(initialValue: entry.isBookmarked)
+    }
 
     var body: some View {
         ScrollView {
@@ -189,11 +356,22 @@ private struct WatchArticleDetailView: View {
                         .foregroundStyle(.primary)
                 }
 
+                Button {
+                    isBookmarked.toggle()
+                    toggleBookmark()
+                } label: {
+                    Label(
+                        isBookmarked ? "Lesezeichen entfernen" : "Lesezeichen",
+                        systemImage: isBookmarked ? "bookmark.fill" : "bookmark"
+                    )
+                }
+                .buttonStyle(.bordered)
+                .padding(.top, 6)
+
                 Button("Auf iPhone öffnen") {
                     openOnPhone()
                 }
                 .buttonStyle(.borderedProminent)
-                .padding(.top, 6)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 2)
@@ -214,8 +392,18 @@ private enum FeedTintPalette {
     static func color(for key: String) -> Color {
         let normalized = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalized.isEmpty else { return colors[0] }
-        let index = abs(normalized.hashValue) % colors.count
+        let index = stableIndex(for: normalized, count: colors.count)
         return colors[index]
+    }
+
+    private static func stableIndex(for value: String, count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in value.lowercased().utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return Int(hash % UInt64(count))
     }
 }
 

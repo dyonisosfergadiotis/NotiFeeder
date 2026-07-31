@@ -11,7 +11,7 @@ Die App ist vollständig in Swift/SwiftUI gebaut und fokussiert auf schnelles Le
 - Lesezeichen via SwiftData (`FeedEntryModel`)
 - Homescreen-Widget (Small/Medium/Large) mit optional transparentem Hintergrund
 - Deep Links auf Artikel (`notifeeder://article?...`) aus dem Widget in die App
-- Apple-Watch-Sync über `WatchConnectivity` (Snapshot der Feeds + Öffnen auf dem iPhone)
+- Apple-Watch-Sync über `WatchConnectivity` (priorisierte Artikel-Snapshots, Filter, Lesezeichen und Öffnen auf dem iPhone)
 - Onboarding-Flow zum initialen Feed-Setup
 
 ## Tech Stack
@@ -76,7 +76,8 @@ xcodebuild -project NotiFeeder.xcodeproj -scheme "NotiFeeder Watch App" build
 
 - `NotiFeeder/` - iOS Haupt-App
 - `NotiFeeder Widget/` - Widget Extension
-- `NotiFeeder AW/` - watchOS App
+- `NotiFeeder Watch App/` - watchOS App
+- `NotiFeeder WidgetExtension AW/` - watchOS Widget Extension
 - `Shared/` - gemeinsame Bausteine zwischen Targets
 
 ## Datenhaltung

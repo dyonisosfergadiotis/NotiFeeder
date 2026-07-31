@@ -29,6 +29,54 @@ struct WatchFeedEntry: Codable, Hashable, Identifiable {
     let feedURL: String?
     let pubDateString: String?
     let isRead: Bool
+    let isBookmarked: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case title
+        case shortTitle
+        case link
+        case content
+        case sourceTitle
+        case feedURL
+        case pubDateString
+        case isRead
+        case isBookmarked
+    }
+
+    init(
+        title: String,
+        shortTitle: String,
+        link: String,
+        content: String,
+        sourceTitle: String?,
+        feedURL: String?,
+        pubDateString: String?,
+        isRead: Bool,
+        isBookmarked: Bool
+    ) {
+        self.title = title
+        self.shortTitle = shortTitle
+        self.link = link
+        self.content = content
+        self.sourceTitle = sourceTitle
+        self.feedURL = feedURL
+        self.pubDateString = pubDateString
+        self.isRead = isRead
+        self.isBookmarked = isBookmarked
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        title = try container.decode(String.self, forKey: .title)
+        shortTitle = try container.decode(String.self, forKey: .shortTitle)
+        link = try container.decode(String.self, forKey: .link)
+        content = try container.decode(String.self, forKey: .content)
+        sourceTitle = try container.decodeIfPresent(String.self, forKey: .sourceTitle)
+        feedURL = try container.decodeIfPresent(String.self, forKey: .feedURL)
+        pubDateString = try container.decodeIfPresent(String.self, forKey: .pubDateString)
+        isRead = try container.decode(Bool.self, forKey: .isRead)
+        isBookmarked = try container.decodeIfPresent(Bool.self, forKey: .isBookmarked) ?? false
+    }
 
     var displayTitle: String {
         let trimmed = shortTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -52,6 +100,33 @@ struct WatchFeedEntry: Codable, Hashable, Identifiable {
     var relativeDateText: String {
         guard let parsedDate else { return "" }
         return Self.relativeFormatter.localizedString(for: parsedDate, relativeTo: Date())
+    }
+
+    var isToday: Bool {
+        guard let parsedDate else { return false }
+        return Calendar.current.isDateInToday(parsedDate)
+    }
+
+    var watchPriority: Int {
+        var score = 0
+        if !isRead { score += 4 }
+        if isBookmarked { score += 3 }
+        if isToday { score += 2 }
+        return score
+    }
+
+    func toggledBookmark() -> WatchFeedEntry {
+        WatchFeedEntry(
+            title: title,
+            shortTitle: shortTitle,
+            link: link,
+            content: content,
+            sourceTitle: sourceTitle,
+            feedURL: feedURL,
+            pubDateString: pubDateString,
+            isRead: isRead,
+            isBookmarked: !isBookmarked
+        )
     }
 }
 

@@ -49,6 +49,25 @@ nonisolated private final class OfflineAssetFileURLCache: @unchecked Sendable {
     }
 }
 
+nonisolated private final class OfflineReaderHTMLPreparationCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var inFlightContentIDs: Set<String> = []
+
+    func beginPreparing(contentID: String) -> Bool {
+        lock.withLock {
+            guard !inFlightContentIDs.contains(contentID) else { return false }
+            inFlightContentIDs.insert(contentID)
+            return true
+        }
+    }
+
+    func finishPreparing(contentID: String) {
+        lock.withLock {
+            _ = inFlightContentIDs.remove(contentID)
+        }
+    }
+}
+
 enum OfflineArticleArchive {
     nonisolated static let preloader = OfflineArticlePreloader()
 
@@ -71,8 +90,9 @@ enum OfflineArticleArchive {
         below: cachedRootDirectoryURL
     )
     nonisolated private static let assetFileURLCache = OfflineAssetFileURLCache()
+    nonisolated private static let readerHTMLPreparationCache = OfflineReaderHTMLPreparationCache()
     nonisolated private static let mediaAttributeRegex = try? NSRegularExpression(
-        pattern: #"(?i)\b(src|poster)\s*=\s*(["'])([^"']+)\2"#,
+        pattern: #"(?i)\b(src|poster|data-src|data-original|data-lazy-src|data-orig-file)\s*=\s*(["'])([^"']+)\2"#,
         options: []
     )
     nonisolated private static let hrefAttributeRegex = try? NSRegularExpression(
@@ -80,7 +100,7 @@ enum OfflineArticleArchive {
         options: []
     )
     nonisolated private static let srcsetAttributeRegex = try? NSRegularExpression(
-        pattern: #"(?i)\bsrcset\s*=\s*(["'])([^"']+)\1"#,
+        pattern: #"(?i)\b(srcset|data-srcset)\s*=\s*(["'])([^"']+)\2"#,
         options: []
     )
 
@@ -137,6 +157,39 @@ enum OfflineArticleArchive {
         }
     }
 
+    nonisolated static func existingPreparedReaderHTMLDocumentURL(forContentID contentID: String) -> URL? {
+        guard let fileURL = readerHTMLFileURL(forContentID: contentID),
+              FileManager.default.fileExists(atPath: fileURL.path) else {
+            return nil
+        }
+        return fileURL
+    }
+
+    nonisolated static func prepareReaderHTMLDocumentIfNeeded(
+        forContentID contentID: String,
+        articleURL: URL?,
+        htmlDocument: String
+    ) {
+        guard existingPreparedReaderHTMLDocumentURL(forContentID: contentID) == nil else { return }
+        guard readerHTMLPreparationCache.beginPreparing(contentID: contentID) else { return }
+        defer {
+            readerHTMLPreparationCache.finishPreparing(contentID: contentID)
+        }
+
+        guard let fileURL = readerHTMLFileURL(forContentID: contentID),
+              let articlesDirectoryURL else {
+            return
+        }
+
+        do {
+            try FileManager.default.createDirectory(at: articlesDirectoryURL, withIntermediateDirectories: true)
+            let rewritten = rewriteDocumentForLocalRendering(htmlDocument, relativeTo: articleURL)
+            try rewritten.write(to: fileURL, atomically: true, encoding: .utf8)
+        } catch {
+            AppLogger.persistence.warning("Failed to prepare reader HTML for \(contentID, privacy: .private)")
+        }
+    }
+
     @discardableResult
     nonisolated static func prepareOfflineHTMLDocument(for entry: FeedEntry) -> URL? {
         prepareOfflineHTMLDocument(
@@ -172,6 +225,13 @@ enum OfflineArticleArchive {
 
     nonisolated fileprivate static func articleStorageFileName(for articleLink: String) -> String {
         stableHash(for: articleLink)
+    }
+
+    nonisolated private static func readerHTMLFileURL(forContentID contentID: String) -> URL? {
+        guard let articlesDirectoryURL else { return nil }
+        return articlesDirectoryURL
+            .appendingPathComponent("reader-\(stableHash(for: "reader|\(contentID)"))")
+            .appendingPathExtension("html")
     }
 
     nonisolated fileprivate static func assetFileURL(for remoteURL: URL) -> URL? {
@@ -287,8 +347,8 @@ enum OfflineArticleArchive {
             let range = NSRange(html.startIndex..<html.endIndex, in: html)
             let matches = srcsetAttributeRegex.matches(in: html, options: [], range: range)
             for match in matches {
-                guard match.numberOfRanges >= 3,
-                      let valueRange = Range(match.range(at: 2), in: html) else {
+                guard match.numberOfRanges >= 4,
+                      let valueRange = Range(match.range(at: 3), in: html) else {
                     continue
                 }
                 collected.append(contentsOf: mediaURLs(inSrcset: String(html[valueRange]), relativeTo: articleURL))
@@ -384,13 +444,15 @@ enum OfflineArticleArchive {
 
         var rewritten = html
         for match in matches.reversed() {
-            guard match.numberOfRanges >= 3,
+            guard match.numberOfRanges >= 4,
                   let fullRange = Range(match.range(at: 0), in: rewritten),
-                  let quoteRange = Range(match.range(at: 1), in: rewritten),
-                  let valueRange = Range(match.range(at: 2), in: rewritten) else {
+                  let attributeNameRange = Range(match.range(at: 1), in: rewritten),
+                  let quoteRange = Range(match.range(at: 2), in: rewritten),
+                  let valueRange = Range(match.range(at: 3), in: rewritten) else {
                 continue
             }
 
+            let attributeName = String(rewritten[attributeNameRange])
             let quote = String(rewritten[quoteRange])
             let rawValue = String(rewritten[valueRange])
             let replacementValue = rawValue
@@ -410,7 +472,7 @@ enum OfflineArticleArchive {
                 .filter { !$0.isEmpty }
                 .joined(separator: ", ")
 
-            let replacement = "srcset=\(quote)\(replacementValue)\(quote)"
+            let replacement = "\(attributeName)=\(quote)\(replacementValue)\(quote)"
             rewritten.replaceSubrange(fullRange, with: replacement)
         }
 
@@ -685,6 +747,9 @@ actor OfflineArticlePreloader {
         }
 
         for fileURL in fileURLs {
+            if fileURL.lastPathComponent.hasPrefix("reader-") {
+                continue
+            }
             guard validFileNames.contains(fileURL.lastPathComponent) == false else { continue }
             try? fileManager.removeItem(at: fileURL)
         }

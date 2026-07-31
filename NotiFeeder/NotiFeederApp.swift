@@ -10,6 +10,10 @@ struct NotiFeederApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var theme = ThemeSettings()
 
+    init() {
+        UserProfileStore.repairStoredDisplayNameValues()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

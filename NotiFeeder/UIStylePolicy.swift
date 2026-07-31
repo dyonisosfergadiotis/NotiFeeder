@@ -77,18 +77,30 @@ enum UIStylePolicy {
 
     static func accentBackgroundColors(accent: Color, colorScheme: ColorScheme) -> [Color] {
         [
-            accent.opacity(colorScheme == .dark ? 0.14 : 0.11),
-            accent.opacity(colorScheme == .dark ? 0.06 : 0.04),
-            Color(.systemBackground)
+            accent.opacity(colorScheme == .dark ? 0.14 : 0.16),
+            accent.opacity(colorScheme == .dark ? 0.06 : 0.08),
+            Color.platformSystemBackground
         ]
     }
 
     static func topChromeColors(accent: Color, colorScheme: ColorScheme) -> [Color] {
         [
-            accent.opacity(colorScheme == .dark ? 0.16 : 0.12),
-            accent.opacity(colorScheme == .dark ? 0.04 : 0.03),
-            accent.opacity(0.01),
-            accent.opacity(0.01)
+            accent.opacity(colorScheme == .dark ? 0.16 : 0.18),
+            accent.opacity(colorScheme == .dark ? 0.04 : 0.07),
+            accent.opacity(colorScheme == .dark ? 0.01 : 0.025),
+            accent.opacity(colorScheme == .dark ? 0.01 : 0.02)
         ]
+    }
+}
+
+private extension Color {
+    static var platformSystemBackground: Color {
+        #if canImport(UIKit)
+        Color(.systemBackground)
+        #elseif canImport(AppKit)
+        Color(nsColor: .windowBackgroundColor)
+        #else
+        Color.primary.opacity(0.02)
+        #endif
     }
 }

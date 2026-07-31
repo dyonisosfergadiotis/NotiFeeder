@@ -1212,6 +1212,14 @@ struct NotiFeeder_WidgetEntryView: View {
         return articleDeepLink(for: item.link)
     }
 
+    private var themeAccent: Color {
+        WidgetTheme.accent(for: colorScheme)
+    }
+
+    private func tint(for item: WidgetUnreadItem) -> Color {
+        item.feedColor ?? themeAccent
+    }
+
     @ViewBuilder
     private var contentCard: some View {
         switch family {
@@ -1285,43 +1293,43 @@ struct NotiFeeder_WidgetEntryView: View {
                             Text(item.title.isEmpty ? "Keine ungelesenen Artikel" : item.title)
                                 .font(titleFont)
                                 .lineLimit(1)
-                                .foregroundStyle(.primary)
-                                .shadow(color: useTransparentBackground ? Color.black.opacity(0.25) : .clear, radius: 1.2, x: 0, y: 1)
+                                .foregroundStyle(WidgetTheme.primaryText(for: colorScheme))
+                                .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.25), radius: 1.2, x: 0, y: 1)
                             Spacer(minLength: 8)
                         }
                         
                         if let preview = item.preview, !preview.isEmpty {
                             Text(preview)
                                 .font(metaFont)
-                                .foregroundStyle(.secondary)
-                                .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)
+                                .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
+                                .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.2), radius: 1, x: 0, y: 1)
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                         } else {
                             Text(item.link)
                                 .font(metaFont)
-                                .foregroundStyle(.secondary)
-                                .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)
+                                .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
+                                .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.2), radius: 1, x: 0, y: 1)
                                 .lineLimit(1)
                         }
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(item.feedTitle)
                                 .font(metaFont)
-                                .foregroundStyle(.secondary)
-                                .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)
+                                .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
+                                .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.2), radius: 1, x: 0, y: 1)
                                 .lineLimit(1)
                             Spacer(minLength: 8)
                             if Calendar.current.isDateInToday(item.date) {
                                 Text(item.date, format: .dateTime.hour().minute().locale(Locale(identifier: "de_DE")))
                                     .font(metaFont)
-                                    .foregroundStyle(.secondary)
-                                    .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)
+                                    .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
+                                    .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.2), radius: 1, x: 0, y: 1)
                                     .lineLimit(1)
                             } else if let label = displayDateLabel(item.date) {
                                 Text(label)
                                     .font(metaFont)
-                                    .foregroundStyle(.secondary)
-                                    .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)
+                                    .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
+                                    .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.2), radius: 1, x: 0, y: 1)
                                     .lineLimit(1)
                             }
                         }
@@ -1339,7 +1347,7 @@ struct NotiFeeder_WidgetEntryView: View {
 
                 if index != entry.items.count - 1 {
                     Rectangle()
-                        .fill(Color.black.opacity(0.08))
+                        .fill(WidgetTheme.divider(for: colorScheme))
                         .frame(height: 1)
                 }
             }
@@ -1355,7 +1363,7 @@ struct NotiFeeder_WidgetEntryView: View {
                         Text(item.feedTitle.isEmpty ? "NotiFeeder" : item.feedTitle)
                             .font(.system(size: 10, weight: .medium))
                             .lineLimit(1)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
                     }
 
                     Spacer(minLength: 4)
@@ -1364,17 +1372,17 @@ struct NotiFeeder_WidgetEntryView: View {
                         if item.isNew {
                             Image(systemName: "rays")
                                 .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(item.feedColor ?? entry.accent)
+                                .foregroundStyle(tint(for: item))
                                 .widgetAccentable()
                         } else {
                             Image(systemName: "eye.fill")
                                 .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
                         }
 
                         Text(lockScreenDateLabel(for: item.date))
                             .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
                             .lineLimit(1)
                     }
                 }
@@ -1383,18 +1391,18 @@ struct NotiFeeder_WidgetEntryView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                     .multilineTextAlignment(.leading)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(WidgetTheme.primaryText(for: colorScheme))
 
                 Text(lockScreenPreview(for: item))
                     .font(.system(size: 10.5))
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
             }
         } else {
             Text("Keine Artikel")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
         }
     }
 
@@ -1428,8 +1436,8 @@ struct NotiFeeder_WidgetEntryView: View {
             } else {
                 LinearGradient(
                     colors: [
-                        entry.accent.opacity(0.22),
-                        entry.accent.opacity(0.55)
+                        themeAccent.opacity(colorScheme == .dark ? 0.24 : 0.32),
+                        themeAccent.opacity(colorScheme == .dark ? 0.58 : 0.74)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -1465,10 +1473,10 @@ struct NotiFeeder_WidgetEntryView: View {
                 .padding(innerPadding)
                 .background(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(colorScheme == .dark ? Color.black.opacity(0.6) : Color.white.opacity(0.9))
+                        .fill(WidgetTheme.cardFill(for: colorScheme))
                         .overlay(
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .stroke(entry.accent.opacity(0.35), lineWidth: 1)
+                                .stroke(themeAccent.opacity(colorScheme == .dark ? 0.35 : 0.48), lineWidth: 1)
                         )
                 )
                 .padding(outerPadding)
@@ -1482,21 +1490,21 @@ struct NotiFeeder_WidgetEntryView: View {
                     .font(.headline)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
-                    .foregroundStyle(.primary)
-                    .shadow(color: useTransparentBackground ? Color.black.opacity(0.25) : .clear, radius: 1.5, x: 0, y: 1)
+                    .foregroundStyle(WidgetTheme.primaryText(for: colorScheme))
+                    .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.25), radius: 1.5, x: 0, y: 1)
                     .frame(maxWidth: .infinity, alignment: .center)
 
                 if let preview = item.preview, !preview.isEmpty {
                     Text(preview)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
-                        .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)
+                        .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.2), radius: 1, x: 0, y: 1)
                 } else if item.title.isEmpty {
                     Text("Pull‑to‑Refresh in der App oder „Widgets neu laden“.")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
                         .lineLimit(2)
                         .multilineTextAlignment(.center)
                 }
@@ -1508,24 +1516,24 @@ struct NotiFeeder_WidgetEntryView: View {
                 Text(item.feedTitle.isEmpty ? "NotiFeeder" : item.feedTitle)
                     .font(.caption2)
                     .lineLimit(1)
-                    .foregroundStyle(item.feedColor ?? entry.accent)
+                    .foregroundStyle(tint(for: item))
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(
                         Capsule()
-                            .fill((item.feedColor ?? entry.accent).opacity(0.15))
+                            .fill(tint(for: item).opacity(colorScheme == .dark ? 0.15 : 0.20))
                     )
                 Spacer(minLength: 6)
                 if Calendar.current.isDateInToday(item.date) {
                     Text(item.date, format: .dateTime.hour().minute().locale(Locale(identifier: "de_DE")))
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)
+                        .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
+                        .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.2), radius: 1, x: 0, y: 1)
                 } else if let label = displayDateLabel(item.date) {
                     Text(label)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .shadow(color: useTransparentBackground ? Color.black.opacity(0.2) : .clear, radius: 1, x: 0, y: 1)
+                        .foregroundStyle(WidgetTheme.secondaryText(for: colorScheme))
+                        .shadow(color: WidgetTheme.textShadow(for: colorScheme, isTransparent: useTransparentBackground, opacity: 0.2), radius: 1, x: 0, y: 1)
                 }
             }
         }
@@ -1592,32 +1600,6 @@ private extension DateFormatter {
         f.dateFormat = "dd.MM"
         return f
     }()
-}
-
-public extension Color {
-     static func fromHex(_ hex: String) -> Color {
-        let sanitized = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: sanitized).scanHexInt64(&int)
-
-        let r, g, b: UInt64
-        switch sanitized.count {
-        case 6:
-            r = (int >> 16) & 0xFF
-            g = (int >> 8) & 0xFF
-            b = int & 0xFF
-        default:
-            r = 128
-            g = 128
-            b = 128
-        }
-
-        return Color(.sRGB,
-                     red: Double(r) / 255.0,
-                     green: Double(g) / 255.0,
-                     blue: Double(b) / 255.0,
-                     opacity: 1.0)
-    }
 }
 
 // MARK: - Previews

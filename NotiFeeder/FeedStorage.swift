@@ -14,6 +14,7 @@ nonisolated enum FeedStorage {
         static let feedHealthSnapshots = "feed.health.snapshots.v1"
         static let offlineRetainedFetchedArticleLimit = "offline.retainedFetchedArticleLimit"
         static let profileDisplayName = "profile.displayName"
+        static let profileAvatarImageData = "profile.avatarImageData"
         static let uiCardsStyleFullColor = "ui.cards.style.fullColor"
         static let readerFontScale = "readerFontScale"
         static let readerFontFamily = "readerFontFamily"
@@ -21,7 +22,6 @@ nonisolated enum FeedStorage {
         static let readerTextAlignment = "readerTextAlignment"
         static let readerParagraphSpacing = "readerParagraphSpacing"
         static let readerContentWidth = "readerContentWidth"
-        static let readerMediaWidth = "readerMediaWidth"
         static let widgetSelectedFeedIDs = "nf_widget_selected_feed_ids_v1"
     }
 
@@ -50,6 +50,7 @@ nonisolated enum FeedStorage {
             Keys.feedHealthSnapshots,
             Keys.offlineRetainedFetchedArticleLimit,
             Keys.profileDisplayName,
+            Keys.profileAvatarImageData,
             Keys.uiCardsStyleFullColor,
             Keys.readerFontScale,
             Keys.readerFontFamily,
@@ -57,7 +58,6 @@ nonisolated enum FeedStorage {
             Keys.readerTextAlignment,
             Keys.readerParagraphSpacing,
             Keys.readerContentWidth,
-            Keys.readerMediaWidth,
             Keys.widgetSelectedFeedIDs
         ]
 
@@ -262,7 +262,10 @@ nonisolated enum FeedCacheSync {
     }
 
     private static func shouldUseBlobStorage(for key: String, data: Data) -> Bool {
-        blobBackedKeys.contains(key) || data.count >= blobStorageThreshold
+        if key == FeedStorage.Keys.profileAvatarImageData {
+            return false
+        }
+        return blobBackedKeys.contains(key) || data.count >= blobStorageThreshold
     }
 
     static func defaultsData(for key: String, defaults: UserDefaults) -> Data? {

@@ -5,6 +5,7 @@ import OSLog
 extension Notification.Name {
     static let watchRefreshRequested = Notification.Name("watchRefreshRequested")
     static let watchOpenArticleRequested = Notification.Name("watchOpenArticleRequested")
+    static let watchToggleBookmarkRequested = Notification.Name("watchToggleBookmarkRequested")
 }
 
 struct WatchFeedSnapshot: Codable {
@@ -30,6 +31,7 @@ struct WatchFeedEntry: Codable, Hashable, Identifiable {
     let feedURL: String?
     let pubDateString: String?
     let isRead: Bool
+    let isBookmarked: Bool
 }
 
 final class PhoneWatchSyncManager: NSObject {
@@ -41,6 +43,7 @@ final class PhoneWatchSyncManager: NSObject {
         static let openLink = "link"
         static let refresh = "refresh"
         static let open = "open"
+        static let bookmark = "bookmark"
     }
 
     private let maxEntries = 100
@@ -81,15 +84,23 @@ final class PhoneWatchSyncManager: NSObject {
         session.activate()
     }
 
-    func pushSnapshot(feeds: [FeedSource], entries: [FeedEntry], readIDs: Set<String>, lastRefreshDate: Date?) {
+    func pushSnapshot(
+        feeds: [FeedSource],
+        entries: [FeedEntry],
+        readIDs: Set<String>,
+        bookmarkedLinks: Set<String>,
+        lastRefreshDate: Date?
+    ) {
         snapshotTask?.cancel()
         snapshotTask = Task(priority: .utility) { [weak self] in
             guard let self else { return }
 
             let normalizedFeeds = feeds.map { WatchFeedSource(title: $0.title, url: $0.url) }
-            let sorted = entries.sorted { lhs, rhs in
-                DateParser.parse(lhs.pubDateString) > DateParser.parse(rhs.pubDateString)
-            }
+            let sorted = Self.watchRelevantEntries(
+                from: entries,
+                readIDs: readIDs,
+                bookmarkedLinks: bookmarkedLinks
+            )
 
             let normalizedEntries = sorted.prefix(maxEntries).map { entry in
                 WatchFeedEntry(
@@ -100,7 +111,8 @@ final class PhoneWatchSyncManager: NSObject {
                     sourceTitle: entry.sourceTitle,
                     feedURL: entry.feedURL,
                     pubDateString: entry.pubDateString,
-                    isRead: readIDs.contains(entry.link)
+                    isRead: readIDs.contains(entry.link),
+                    isBookmarked: bookmarkedLinks.contains(entry.link)
                 )
             }
 
@@ -127,6 +139,33 @@ final class PhoneWatchSyncManager: NSObject {
                 session.transferUserInfo(context)
             }
         }
+    }
+
+    private static func watchRelevantEntries(
+        from entries: [FeedEntry],
+        readIDs: Set<String>,
+        bookmarkedLinks: Set<String>
+    ) -> [FeedEntry] {
+        entries.sorted { lhs, rhs in
+            let lhsPriority = watchPriority(for: lhs, readIDs: readIDs, bookmarkedLinks: bookmarkedLinks)
+            let rhsPriority = watchPriority(for: rhs, readIDs: readIDs, bookmarkedLinks: bookmarkedLinks)
+            if lhsPriority != rhsPriority {
+                return lhsPriority > rhsPriority
+            }
+            return DateParser.parse(lhs.pubDateString) > DateParser.parse(rhs.pubDateString)
+        }
+    }
+
+    private static func watchPriority(
+        for entry: FeedEntry,
+        readIDs: Set<String>,
+        bookmarkedLinks: Set<String>
+    ) -> Int {
+        var score = 0
+        if !readIDs.contains(entry.link) { score += 4 }
+        if bookmarkedLinks.contains(entry.link) { score += 3 }
+        if Calendar.current.isDateInToday(DateParser.parse(entry.pubDateString)) { score += 2 }
+        return score
     }
 
     private func canSendSnapshot(using session: WCSession) -> Bool {
@@ -185,6 +224,15 @@ extension PhoneWatchSyncManager: WCSessionDelegate {
             DispatchQueue.main.async {
                 NotificationCenter.default.post(
                     name: .watchOpenArticleRequested,
+                    object: nil,
+                    userInfo: [Keys.openLink: link]
+                )
+            }
+        case Keys.bookmark:
+            guard let link = message[Keys.openLink] as? String, !link.isEmpty else { return }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: .watchToggleBookmarkRequested,
                     object: nil,
                     userInfo: [Keys.openLink: link]
                 )

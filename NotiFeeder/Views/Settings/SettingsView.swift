@@ -3,10 +3,16 @@ import UIKit
 
 enum UserProfileStore {
     static let displayNameKey = "profile.displayName"
-    static let avatarImageDataKey = "profile.avatarImageData"
+    static let avatarImageDataKey = FeedStorage.Keys.profileAvatarImageData
+    static var defaults: UserDefaults { FeedStorage.defaults }
 
     static func sanitizedDisplayName(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func repairStoredDisplayNameValues() {
+        repairStoredDisplayNameValue(in: defaults)
+        repairStoredDisplayNameValue(in: .standard)
     }
 
     static func initials(for value: String) -> String {
@@ -23,7 +29,7 @@ enum UserProfileStore {
     }
 
     static func normalizedAvatarData(from image: UIImage) -> Data? {
-        let maxDimension: CGFloat = 1024
+        let maxDimension: CGFloat = 512
         let maxSide = max(image.size.width, image.size.height)
         let scale = maxSide > maxDimension ? (maxDimension / maxSide) : 1
         let targetSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
@@ -32,7 +38,35 @@ enum UserProfileStore {
         let rendered = renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: targetSize))
         }
-        return rendered.jpegData(compressionQuality: 0.82)
+        return rendered.jpegData(compressionQuality: 0.74)
+    }
+
+    @MainActor
+    static func syncDisplayNameToICloud(_ value: String) {
+        FeedICloudSyncManager.shared.pushLocalPreferenceValue(
+            sanitizedDisplayName(value),
+            for: FeedStorage.Keys.profileDisplayName
+        )
+    }
+
+    @MainActor
+    static func syncAvatarToICloud(_ data: Data) {
+        let token = FeedCacheSync.write(data, for: FeedStorage.Keys.profileAvatarImageData)
+        FeedCloudKitSyncManager.shared.uploadLocalData(
+            data,
+            token: token,
+            for: FeedStorage.Keys.profileAvatarImageData
+        )
+    }
+
+    private static func repairStoredDisplayNameValue(in defaults: UserDefaults) {
+        guard let object = defaults.object(forKey: displayNameKey),
+              !(object is String) else {
+            return
+        }
+
+        defaults.removeObject(forKey: displayNameKey)
+        defaults.removeObject(forKey: FeedCacheSync.syncTokenKey(for: displayNameKey))
     }
 }
 
@@ -41,8 +75,8 @@ struct SettingsView: View {
     @Binding var savedFeedsData: Data
     var onFeedsDidChange: () -> Void = {}
     @EnvironmentObject private var theme: ThemeSettings
-    @AppStorage(UserProfileStore.displayNameKey) private var profileDisplayName: String = ""
-    @AppStorage(UserProfileStore.avatarImageDataKey) private var profileAvatarData: Data = Data()
+    @AppStorage(UserProfileStore.displayNameKey, store: UserProfileStore.defaults) private var profileDisplayName: String = ""
+    @AppStorage(UserProfileStore.avatarImageDataKey, store: UserProfileStore.defaults) private var profileAvatarData: Data = Data()
     @AppStorage("ui.cards.style.fullColor") private var fullColorCards: Bool = false
     @AppStorage(FeedStorage.Keys.offlineRetainedFetchedArticleLimit, store: FeedStorage.defaults)
     private var offlineRetainedFetchedArticleLimitRaw: Int = OfflineArticleRetentionLimit.defaultValue.rawValue
@@ -119,10 +153,7 @@ struct SettingsView: View {
         }
         .tint(theme.uiAccentColor)
         .onChange(of: profileDisplayName) { _, newValue in
-            FeedICloudSyncManager.shared.pushLocalPreferenceValue(
-                UserProfileStore.sanitizedDisplayName(newValue),
-                for: FeedStorage.Keys.profileDisplayName
-            )
+            UserProfileStore.syncDisplayNameToICloud(newValue)
         }
         .onChange(of: fullColorCards) { _, newValue in
             FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.uiCardsStyleFullColor)
@@ -342,14 +373,19 @@ private struct SettingsNavigationRow<Destination: View>: View {
             .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                AppHaptics.selection()
+            }
+        )
     }
 }
 
 struct ProfileNameEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var theme: ThemeSettings
-    @AppStorage(UserProfileStore.displayNameKey) private var profileDisplayName: String = ""
-    @AppStorage(UserProfileStore.avatarImageDataKey) private var profileAvatarData: Data = Data()
+    @AppStorage(UserProfileStore.displayNameKey, store: UserProfileStore.defaults) private var profileDisplayName: String = ""
+    @AppStorage(UserProfileStore.avatarImageDataKey, store: UserProfileStore.defaults) private var profileAvatarData: Data = Data()
     @State private var draftName: String = ""
     @State private var showAvatarSourceDialog = false
     @State private var imagePickerSource: AvatarImageSource?
@@ -433,6 +469,9 @@ struct ProfileNameEditorView: View {
                 profileAvatarData = data
             }
         }
+        .onChange(of: profileAvatarData) { _, newValue in
+            syncProfileAvatarChange(newValue)
+        }
         .onAppear {
             if draftName.isEmpty {
                 draftName = UserProfileStore.sanitizedDisplayName(profileDisplayName)
@@ -452,7 +491,22 @@ struct ProfileNameEditorView: View {
         guard !sanitizedDraft.isEmpty else { return }
         AppHaptics.success()
         profileDisplayName = sanitizedDraft
+        UserProfileStore.syncDisplayNameToICloud(sanitizedDraft)
+        UserProfileStore.syncAvatarToICloud(profileAvatarData)
         dismiss()
+    }
+
+    private var cloudProfileName: String {
+        sanitizedDraft.isEmpty ? UserProfileStore.sanitizedDisplayName(profileDisplayName) : sanitizedDraft
+    }
+
+    private func syncProfileAvatarChange(_ data: Data) {
+        let name = cloudProfileName
+        if !sanitizedDraft.isEmpty, sanitizedDraft != UserProfileStore.sanitizedDisplayName(profileDisplayName) {
+            profileDisplayName = sanitizedDraft
+        }
+        UserProfileStore.syncAvatarToICloud(data)
+        UserProfileStore.syncDisplayNameToICloud(name)
     }
 
     private enum AvatarImageSource: String, Identifiable {

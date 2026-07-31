@@ -12,12 +12,24 @@ import UIKit
 final class ReadingLiveActivityManager {
     static let shared = ReadingLiveActivityManager()
 
+    private static let persistedProgressKey = "nf_reading_progress_by_article_v1"
+
     private var activity: Activity<ReadingActivityAttributes>?
     private var lastProgressUpdateTime: TimeInterval = 0
     private var lastReadingProgress: Double = -1
+    private var persistedProgressByArticleID: [String: Double]
     private var thumbnailTasks: [String: Task<Void, Never>] = [:]
 
-    private init() {}
+    private init() {
+        persistedProgressByArticleID = FeedStorage.defaults
+            .dictionary(forKey: Self.persistedProgressKey)?
+            .compactMapValues { value in
+                if let number = value as? NSNumber {
+                    return number.doubleValue
+                }
+                return value as? Double
+            } ?? [:]
+    }
 
     func startOrUpdate(entry: FeedEntry, feedColor: Color) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
@@ -86,9 +98,11 @@ final class ReadingLiveActivityManager {
     }
 
     func updateReadingProgress(_ progress: Double, for link: String) {
+        let clamped = min(1, max(0, progress))
+        persistReadingProgress(clamped, for: link)
+
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
 
-        let clamped = min(1, max(0, progress))
         let now = CACurrentMediaTime()
         guard abs(clamped - lastReadingProgress) >= 0.015 || now - lastProgressUpdateTime >= 2.5 else {
             return
@@ -111,6 +125,10 @@ final class ReadingLiveActivityManager {
         Task {
             await activity.update(ActivityContent(state: state, staleDate: nil))
         }
+    }
+
+    func currentReadingProgress(for link: String) -> Double {
+        currentProgress(for: link)
     }
 
     func end() {
@@ -141,8 +159,23 @@ final class ReadingLiveActivityManager {
     }
 
     private func currentProgress(for link: String) -> Double {
-        guard activity?.attributes.link == link else { return max(0, lastReadingProgress) }
+        guard activity?.attributes.link == link else {
+            return persistedProgressByArticleID[link] ?? 0
+        }
         return activity?.content.state.readingProgress ?? max(0, lastReadingProgress)
+    }
+
+    private func persistReadingProgress(_ progress: Double, for link: String) {
+        guard !link.isEmpty else { return }
+
+        let previous = persistedProgressByArticleID[link] ?? 0
+        let shouldPersist = abs(progress - previous) >= 0.01
+            || (progress <= 0.001 && previous > 0)
+            || (progress >= 0.999 && previous < 1)
+        guard shouldPersist else { return }
+
+        persistedProgressByArticleID[link] = progress
+        FeedStorage.defaults.set(persistedProgressByArticleID, forKey: Self.persistedProgressKey)
     }
 
     private func updateThumbnailIfNeeded(
@@ -257,6 +290,7 @@ final class ReadingLiveActivityManager {
 
     func startOrUpdate(entry: FeedEntry, feedColor: Any) {}
     func updateReadingProgress(_ progress: Double, for link: String) {}
+    func currentReadingProgress(for link: String) -> Double { 0 }
     func end() {}
 }
 #endif

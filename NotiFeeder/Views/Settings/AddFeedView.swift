@@ -182,7 +182,10 @@ struct AddFeedView: View {
                         .tint(theme.uiAccentColor)
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Abbrechen") { dismiss() }
+                    Button("Abbrechen") {
+                        AppHaptics.selection()
+                        dismiss()
+                    }
                 }
             }
         }

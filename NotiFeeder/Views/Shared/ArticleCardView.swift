@@ -5,6 +5,7 @@ struct ArticleCardView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @State private var unreadTintProgress: CGFloat
+    @State private var textColumnHeight: CGFloat = ArticleCardLayout.fallbackThumbnailHeight
 
     let feedTitle: String
     let feedColor: Color
@@ -16,14 +17,14 @@ struct ArticleCardView: View {
     let date: Date?
     let isBookmarked: Bool
     let isActiveArticle: Bool
+    let isSelected: Bool
+    let selectionAccent: Color
     let highlightTerm: String?
     let highlightColor: Color
     let useFullColorBackground: Bool
 
-    private let titleFont = Font.system(size: 16, weight: .semibold)
-    private let summaryFont = Font.system(size: 13)
-    private let titleLineHeight: CGFloat = 19
-    private let summaryLineHeight: CGFloat = 16
+    private let titleFont = Font.system(size: 15, weight: .semibold)
+    private let summaryFont = Font.system(size: 12.5)
 
     init(feedTitle: String,
          feedColor: Color,
@@ -35,6 +36,8 @@ struct ArticleCardView: View {
          date: Date?,
          isBookmarked: Bool,
          isActiveArticle: Bool = false,
+         isSelected: Bool = false,
+         selectionAccent: Color = .accentColor,
          highlightTerm: String? = nil,
          highlightColor: Color = .accentColor,
          useFullColorBackground: Bool = false) {
@@ -48,6 +51,8 @@ struct ArticleCardView: View {
         self.date = date
         self.isBookmarked = isBookmarked
         self.isActiveArticle = isActiveArticle
+        self.isSelected = isSelected
+        self.selectionAccent = selectionAccent
         self.highlightTerm = highlightTerm
         self.highlightColor = highlightColor
         self.useFullColorBackground = useFullColorBackground
@@ -74,12 +79,13 @@ struct ArticleCardView: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .top, spacing: ArticleCardLayout.thumbnailTextSpacing) {
             ArticleCardThumbnailView(url: thumbnailURL,
                                      feedColor: feedColor,
-                                     readProgress: CGFloat(readProgress))
+                                     readProgress: CGFloat(readProgress),
+                                     height: textColumnHeight)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(feedTitle)
                         .font(.caption)
@@ -110,32 +116,65 @@ struct ArticleCardView: View {
 
                 highlightableText(for: title, baseColor: titleColor)
                     .font(titleFont)
-                    .lineLimit(2)
+                    .lineLimit(1)
                     .truncationMode(.tail)
                     .allowsTightening(true)
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
-                    .frame(minHeight: titleLineHeight * 2, alignment: .topLeading)
                     .layoutPriority(1)
 
-                if hasSummary, let summary {
-                    highlightableText(for: summary, baseColor: summaryColor)
-                        .font(summaryFont)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity,
-                               maxHeight: summaryLineHeight * 2,
-                               alignment: .topLeading)
+                Group {
+                    if hasSummary, let summary {
+                        highlightableText(for: summary, baseColor: summaryColor)
+                    } else {
+                        Text("\n")
+                            .foregroundStyle(.clear)
+                            .accessibilityHidden(true)
+                    }
                 }
+                .font(summaryFont)
+                .lineLimit(2, reservesSpace: true)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity,
+                       alignment: .topLeading)
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear
+                        .preference(key: ArticleCardTextHeightPreferenceKey.self,
+                                    value: proxy.size.height)
+                }
+            }
         }
+        .padding(ArticleCardLayout.cardInset)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
+        .background(cardBackground)
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: ArticleCardLayout.cardCornerRadius, style: .continuous)
+                    .fill(selectionAccent.opacity(colorScheme == .dark ? 0.10 : 0.065))
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .shadow(
+            color: isSelected ? selectionAccent.opacity(colorScheme == .dark ? 0.24 : 0.14) : .clear,
+            radius: isSelected ? 9 : 0,
+            y: isSelected ? 3 : 0
+        )
+        .contentShape(RoundedRectangle(cornerRadius: ArticleCardLayout.cardCornerRadius, style: .continuous))
+        .onPreferenceChange(ArticleCardTextHeightPreferenceKey.self) { newHeight in
+            let measuredHeight = max(1, newHeight)
+            guard abs(textColumnHeight - measuredHeight) > 0.5 else { return }
+            textColumnHeight = measuredHeight
+        }
         .onChange(of: isRead) { _, newIsRead in
             withAnimation(.easeInOut(duration: 0.24)) {
                 unreadTintProgress = newIsRead ? 0 : 1
             }
         }
+        .animation(.smooth(duration: 0.24, extraBounce: 0.02), value: isSelected)
     }
 
     private var normalizedHighlightTokens: [String] {
@@ -169,6 +208,53 @@ struct ArticleCardView: View {
 
     private func interpolate(unread: Double, read: Double) -> Double {
         unread + (read - unread) * readProgress
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: ArticleCardLayout.cardCornerRadius, style: .continuous)
+            .fill(cardFill)
+            .overlay {
+                RoundedRectangle(cornerRadius: ArticleCardLayout.cardCornerRadius, style: .continuous)
+                    .strokeBorder(cardStroke, lineWidth: 1)
+            }
+    }
+
+    private var cardFill: some ShapeStyle {
+        LinearGradient(
+            colors: [
+                feedColor.opacity(cardTintOpacity),
+                feedColor.opacity(cardTintOpacity * 0.55),
+                Color(.secondarySystemBackground).opacity(cardNeutralOpacity)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var cardTintOpacity: Double {
+        let contrastBoost = colorSchemeContrast == .increased ? 0.05 : 0
+        if useFullColorBackground {
+            return min(1, interpolate(unread: colorScheme == .dark ? 0.28 : 0.26,
+                                      read: colorScheme == .dark ? 0.18 : 0.16) + contrastBoost)
+        }
+        return min(1, interpolate(unread: colorScheme == .dark ? 0.16 : 0.15,
+                                  read: colorScheme == .dark ? 0.10 : 0.10) + contrastBoost)
+    }
+
+    private var cardNeutralOpacity: Double {
+        useFullColorBackground
+        ? (colorScheme == .dark ? 0.28 : 0.58)
+        : (colorScheme == .dark ? 0.46 : 0.74)
+    }
+
+    private var cardStroke: Color {
+        let contrastBoost = colorSchemeContrast == .increased ? 0.12 : 0
+        let base = useFullColorBackground
+        ? interpolate(unread: colorScheme == .dark ? 0.50 : 0.48,
+                      read: colorScheme == .dark ? 0.30 : 0.30)
+        : interpolate(unread: colorScheme == .dark ? 0.34 : 0.34,
+                      read: colorScheme == .dark ? 0.20 : 0.22)
+        return feedColor.opacity(min(1, base + contrastBoost))
     }
     
     private func highlightableText(for content: String, baseColor: Color) -> Text {
@@ -229,18 +315,37 @@ struct ArticleCardView: View {
     }
 }
 
+private enum ArticleCardLayout {
+    static let thumbnailWidth: CGFloat = 76
+    static let fallbackThumbnailHeight: CGFloat = 76
+    static let thumbnailCornerRadius: CGFloat = 10
+    static let thumbnailTextSpacing: CGFloat = 10
+    static let cardInset: CGFloat = 8
+    static let cardCornerRadius: CGFloat = 15
+}
+
+private struct ArticleCardTextHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = ArticleCardLayout.fallbackThumbnailHeight
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 private struct ArticleCardThumbnailView: View {
     let url: URL?
     let feedColor: Color
     let readProgress: CGFloat
+    let height: CGFloat
     @Environment(\.displayScale) private var displayScale
     @State private var loadedImage: UIImage?
     @State private var loadedImageURL: URL?
 
-    init(url: URL?, feedColor: Color, readProgress: CGFloat) {
+    init(url: URL?, feedColor: Color, readProgress: CGFloat, height: CGFloat) {
         self.url = url
         self.feedColor = feedColor
         self.readProgress = readProgress
+        self.height = height
         let cachedImage = url.flatMap { ArticleImagePipeline.shared.cachedImage(for: $0) }
         _loadedImage = State(initialValue: cachedImage)
         _loadedImageURL = State(initialValue: cachedImage == nil ? nil : url)
@@ -256,10 +361,11 @@ private struct ArticleCardThumbnailView: View {
                 thumbnailPlaceholder
             }
         }
-        .frame(width: 76, height: 76)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(width: ArticleCardLayout.thumbnailWidth, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: ArticleCardLayout.thumbnailCornerRadius, style: .continuous))
+        .overlay(thumbnailEdgeFade)
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: ArticleCardLayout.thumbnailCornerRadius, style: .continuous)
                 .stroke(feedColor.opacity(interpolate(unread: 0.38, read: 0.22)), lineWidth: 1)
         )
         .task(id: url, priority: .userInitiated) {
@@ -283,7 +389,7 @@ private struct ArticleCardThumbnailView: View {
 
             loadedImage = nil
             loadedImageURL = nil
-            let maxPixelSize = max(120, 76 * displayScale)
+            let maxPixelSize = max(120, max(ArticleCardLayout.thumbnailWidth, height) * displayScale)
             let image = await ArticleImagePipeline.shared.thumbnailImage(
                 for: url,
                 maxPixelSize: maxPixelSize,
@@ -297,13 +403,47 @@ private struct ArticleCardThumbnailView: View {
 
     private var thumbnailPlaceholder: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: ArticleCardLayout.thumbnailCornerRadius, style: .continuous)
                 .fill(feedColor.opacity(0.12))
             Image(systemName: "photo")
                 .font(.system(size: 18))
                 .fontWeight(.light)
                 .foregroundStyle(feedColor.opacity(0.9))
         }
+    }
+
+    private var thumbnailEdgeFade: some View {
+        ZStack {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [Color.black.opacity(0.16), Color.clear],
+                               startPoint: .top,
+                               endPoint: .bottom)
+                    .frame(height: 12)
+
+                Spacer(minLength: 0)
+
+                LinearGradient(colors: [Color.clear, Color.black.opacity(0.14)],
+                               startPoint: .top,
+                               endPoint: .bottom)
+                    .frame(height: 12)
+            }
+
+            HStack(spacing: 0) {
+                LinearGradient(colors: [Color.black.opacity(0.12), Color.clear],
+                               startPoint: .leading,
+                               endPoint: .trailing)
+                    .frame(width: 10)
+
+                Spacer(minLength: 0)
+
+                LinearGradient(colors: [Color.clear, Color.black.opacity(0.12)],
+                               startPoint: .leading,
+                               endPoint: .trailing)
+                    .frame(width: 10)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: ArticleCardLayout.thumbnailCornerRadius, style: .continuous))
+        .allowsHitTesting(false)
     }
 
     private func interpolate(unread: Double, read: Double) -> Double {

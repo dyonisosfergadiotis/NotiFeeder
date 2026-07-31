@@ -84,11 +84,6 @@ final class FeedICloudSyncManager {
                 key: FeedStorage.Keys.readerContentWidth,
                 defaultValue: .double(720),
                 notification: .feedReaderPreferencesDidSyncFromICloud
-            ),
-            SyncedPreference(
-                key: FeedStorage.Keys.readerMediaWidth,
-                defaultValue: .double(90),
-                notification: .feedReaderPreferencesDidSyncFromICloud
             )
         ]
     }
@@ -400,9 +395,15 @@ final class FeedICloudSyncManager {
         let local = bestAvailablePreferenceValue(for: preference)
         let cloudValue = cloudPreferenceValue(for: preference)
         let cloudToken = cloudStore.double(forKey: FeedCacheSync.syncTokenKey(for: preference.key))
+        if cloudValue == nil, cloudStore.object(forKey: preference.key) != nil {
+            removeInvalidCloudPreferenceValue(for: preference)
+        }
 
         switch (local.value, cloudValue) {
         case (nil, nil):
+            if preference.key == FeedStorage.Keys.profileDisplayName {
+                return
+            }
             let token = writePreference(preference.defaultValue, for: preference)
             pushPreferenceToCloud(preference.defaultValue, token: token, for: preference)
         case (nil, let remote?):
@@ -422,6 +423,18 @@ final class FeedICloudSyncManager {
 
             let normalizedLocalToken = local.token > 0 ? local.token : 0
             let normalizedCloudToken = cloudToken > 0 ? cloudToken : 0
+
+            if preference.key == FeedStorage.Keys.profileDisplayName,
+               let resolvedProfileName = resolvedProfileDisplayName(
+                    localValue: localValue,
+                    remoteValue: remote
+               ) {
+                let resolvedToken = max(normalizedLocalToken, normalizedCloudToken).nextUp
+                _ = writePreference(.string(resolvedProfileName), for: preference, token: resolvedToken)
+                pushPreferenceToCloud(.string(resolvedProfileName), token: resolvedToken, for: preference)
+                NotificationCenter.default.post(name: preference.notification, object: nil)
+                return
+            }
 
             if normalizedCloudToken > normalizedLocalToken {
                 applyCloudPreference(remote, token: normalizedCloudToken, for: preference)
@@ -508,6 +521,33 @@ final class FeedICloudSyncManager {
     private func cloudPreferenceValue(for preference: SyncedPreference) -> SyncedPreferenceValue? {
         preference.cloudValue(from: cloudStore)
     }
+
+    private func removeInvalidCloudPreferenceValue(for preference: SyncedPreference) {
+        cloudStore.removeObject(forKey: preference.key)
+        cloudStore.removeObject(forKey: FeedCacheSync.syncTokenKey(for: preference.key))
+        scheduleCloudSynchronize()
+    }
+
+    private func resolvedProfileDisplayName(
+        localValue: SyncedPreferenceValue,
+        remoteValue: SyncedPreferenceValue
+    ) -> String? {
+        guard case .string(let localName) = localValue,
+              case .string(let remoteName) = remoteValue else {
+            return nil
+        }
+
+        let cleanedLocal = localName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanedRemote = remoteName.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if cleanedLocal.isEmpty, !cleanedRemote.isEmpty {
+            return cleanedRemote
+        }
+        if !cleanedLocal.isEmpty, cleanedRemote.isEmpty {
+            return cleanedLocal
+        }
+        return nil
+    }
 }
 
 private extension FeedICloudSyncManager {
@@ -531,16 +571,20 @@ private extension FeedICloudSyncManager {
         }
 
         func cloudValue(from store: NSUbiquitousKeyValueStore) -> SyncedPreferenceValue? {
-            guard store.object(forKey: key) != nil else { return nil }
+            guard let object = store.object(forKey: key) else { return nil }
             switch defaultValue {
             case .bool:
+                guard object is Bool || object is NSNumber else { return nil }
                 return .bool(store.bool(forKey: key))
             case .int:
+                guard object is Int || object is Int64 || object is NSNumber else { return nil }
                 return .int(Int(store.longLong(forKey: key)))
             case .double:
+                guard object is Double || object is Float || object is Int || object is NSNumber else { return nil }
                 return .double(store.double(forKey: key))
             case .string:
-                return .string(store.string(forKey: key) ?? "")
+                guard let value = object as? String else { return nil }
+                return .string(value)
             }
         }
 

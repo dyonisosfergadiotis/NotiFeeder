@@ -155,30 +155,41 @@ final class ThemeSettings: ObservableObject {
 
 extension Color {
     public static func fromHex(_ hex: String) -> Color {
+        #if canImport(UIKit)
+        Color(UIColor { trait in
+            let colorScheme: ColorScheme = trait.userInterfaceStyle == .dark ? .dark : .light
+            let resolvedHex = FeedColorOption.resolvedHex(hex, for: colorScheme)
+            let components = rgbComponents(from: resolvedHex) ?? (128, 128, 128)
+            return UIColor(
+                red: CGFloat(components.red) / 255.0,
+                green: CGFloat(components.green) / 255.0,
+                blue: CGFloat(components.blue) / 255.0,
+                alpha: 1.0
+            )
+        })
+        #else
+        let resolvedHex = FeedColorOption.resolvedHex(hex, for: .light)
+        let components = rgbComponents(from: resolvedHex) ?? (128, 128, 128)
+        return Color(.sRGB,
+                     red: Double(components.red) / 255.0,
+                     green: Double(components.green) / 255.0,
+                     blue: Double(components.blue) / 255.0,
+                     opacity: 1.0)
+        #endif
+    }
+
+    private static func rgbComponents(from hex: String) -> (red: UInt64, green: UInt64, blue: UInt64)? {
         let sanitized = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
         var int: UInt64 = 0
-        Scanner(string: sanitized).scanHexInt64(&int)
-
-        let r, g, b: UInt64
-        switch sanitized.count {
-        case 6:
-            r = (int >> 16) & 0xFF
-            g = (int >> 8) & 0xFF
-            b = int & 0xFF
-        default:
-            r = 128
-            g = 128
-            b = 128
+        guard sanitized.count == 6, Scanner(string: sanitized).scanHexInt64(&int) else {
+            return nil
         }
 
-        return Color(.sRGB,
-                     red: Double(r) / 255.0,
-                     green: Double(g) / 255.0,
-                     blue: Double(b) / 255.0,
-                     opacity: 1.0)
+        return ((int >> 16) & 0xFF, (int >> 8) & 0xFF, int & 0xFF)
     }
     
     func toHex() -> String? {
+            #if canImport(UIKit)
             // 1. In UIColor konvertieren
             let uic = UIColor(self)
             
@@ -204,11 +215,14 @@ extension Color {
             } else {
                 return String(format: "%02X%02X%02X", r, g, b)
             }
+            #else
+            return nil
+            #endif
         }
 }
 
 
-#if DEBUG
+#if DEBUG && canImport(UIKit)
 import SwiftUI
 
 struct ThemeSettings_BubblesPreview: View {

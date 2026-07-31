@@ -190,6 +190,7 @@ final class FeedRefreshEngine {
                 feeds: feeds,
                 entries: mergedEntries,
                 readIDs: readIDs,
+                bookmarkedLinks: bookmarkedLinks,
                 lastRefreshDate: FeedRefreshState.lastSuccessfulRefreshDate()
             )
 #if canImport(WidgetKit)

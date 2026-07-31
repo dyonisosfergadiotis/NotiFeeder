@@ -44,14 +44,16 @@ final class FeedCloudKitSyncManager {
         FeedStorage.Keys.cachedEntries,
         FeedStorage.Keys.savedArticles,
         FeedStorage.Keys.readArticleIDs,
-        FeedStorage.Keys.bookmarkedArticleIDs
+        FeedStorage.Keys.bookmarkedArticleIDs,
+        FeedStorage.Keys.profileAvatarImageData
     ]
 
     private let notificationByKey: [String: Notification.Name] = [
         FeedStorage.Keys.cachedEntries: .feedCachedEntriesDidRefresh,
         FeedStorage.Keys.savedArticles: .feedSavedArticlesDidSyncFromCloudKit,
         FeedStorage.Keys.readArticleIDs: .feedReadArticleIDsDidSyncFromICloud,
-        FeedStorage.Keys.bookmarkedArticleIDs: .feedBookmarkedArticleIDsDidSyncFromICloud
+        FeedStorage.Keys.bookmarkedArticleIDs: .feedBookmarkedArticleIDsDidSyncFromICloud,
+        FeedStorage.Keys.profileAvatarImageData: .feedProfileDidSyncFromICloud
     ]
 
     init(container: CKContainer? = nil, defaults: UserDefaults? = nil) {

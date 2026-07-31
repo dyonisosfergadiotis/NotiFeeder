@@ -46,8 +46,6 @@ private enum FeedDetailLayout {
     static let headerDateHeight: CGFloat = 16
     static let navigationBarHeight: CGFloat = 64
     static let navigationRevealDistance: CGFloat = 0.48
-    static let readingProgressFadeStart: CGFloat = 0.68
-    static let readingProgressFadeDistance: CGFloat = 0.22
     static let compactPresentationSingleLineHeight: CGFloat = 78
     static let compactPresentationDoubleLineHeight: CGFloat = 96
     static let presentationTransitionDistance: CGFloat = 180
@@ -86,36 +84,9 @@ private struct FeedDetailHeaderTitleHeightKey: PreferenceKey {
 @Observable
 private final class FeedDetailScrollState {
     var collapseProgress: CGFloat = 0
-    var readingProgress: CGFloat = 0
 
-    func reset() {
-        collapseProgress = 0
-        readingProgress = 0
-    }
-}
-
-private struct FeedDetailCompactProgressBar: View {
-    let scrollState: FeedDetailScrollState
-    let tint: Color
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.primary.opacity(0.09))
-                Capsule()
-                    .fill(tint)
-                    .frame(
-                        width: proxy.size.width
-                            * FeedDetailLayout.clampedProgress(scrollState.readingProgress)
-                    )
-            }
-        }
-        .frame(height: 3.5)
-        .padding(.top, 4)
-        .accessibilityElement()
-        .accessibilityLabel("Lesefortschritt")
-        .accessibilityValue("\(Int(scrollState.readingProgress * 100)) Prozent")
+    func reset(collapseProgress: CGFloat = 0) {
+        self.collapseProgress = FeedDetailLayout.clampedProgress(collapseProgress)
     }
 }
 
@@ -186,44 +157,6 @@ private struct FeedDetailCollapsingHeader<Content: View>: View {
     }
 }
 
-private struct FeedDetailReadingProgressLayer: View {
-    let scrollState: FeedDetailScrollState
-    let tint: Color
-    let isSummaryMode: Bool
-
-    var body: some View {
-        GeometryReader { proxy in
-            let fullWidth = proxy.size.width
-            let barHeight: CGFloat = 2
-            let visibleCollapseProgress = isSummaryMode
-                ? 0
-                : scrollState.collapseProgress
-            let progressOpacity = FeedDetailLayout.smoothstep(
-                (visibleCollapseProgress - FeedDetailLayout.readingProgressFadeStart)
-                    / FeedDetailLayout.readingProgressFadeDistance
-            )
-
-            ZStack(alignment: .topLeading) {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.1))
-                    .frame(width: fullWidth, height: barHeight)
-                Rectangle()
-                    .fill(tint)
-                    .frame(
-                        width: fullWidth
-                            * FeedDetailLayout.clampedProgress(scrollState.readingProgress),
-                        height: barHeight
-                    )
-            }
-            .opacity(progressOpacity)
-            .offset(y: FeedDetailLayout.navigationBarHeight)
-        }
-        .opacity(isSummaryMode ? 0 : 1)
-        .allowsHitTesting(false)
-        .zIndex(4)
-    }
-}
-
 struct FeedDetailView: View {
     static func compactPresentationHeight(for title: String, availableWidth: CGFloat) -> CGFloat {
         let font = UIFont.preferredFont(forTextStyle: .subheadline)
@@ -265,6 +198,7 @@ struct FeedDetailView: View {
         cache.totalCostLimit = 24 * 1_024 * 1_024
         return cache
     }()
+    private static let readerHTMLRenderVersion = "reader-rollout-v5"
 
     var entry: FeedEntry
     var feedColor: Color?
@@ -274,12 +208,12 @@ struct FeedDetailView: View {
     var onToggleRead: ((Bool) -> Void)? = nil
     /// Optional callback invoked when bookmark state changes in this detail view.
     var onToggleBookmark: ((Bool) -> Void)? = nil
+    var initialHeaderCollapseProgress: CGFloat = 0
     var isCompactPresentation: Bool = false
     var compactPresentationHeight: CGFloat = FeedDetailLayout.compactPresentationDoubleLineHeight
     var onExpandPresentation: () -> Void = {}
     var onMinimizePresentation: () -> Void = {}
     var onClosePresentation: () -> Void = {}
-    var onReadingProgressChange: (CGFloat) -> Void = { _ in }
 
     enum NavigationDirection {
         case previous
@@ -301,6 +235,7 @@ struct FeedDetailView: View {
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.isOpaque = false
         wv.backgroundColor = .clear
+        wv.underPageBackgroundColor = .clear
         wv.scrollView.backgroundColor = .clear
         wv.scrollView.showsVerticalScrollIndicator = false
         wv.scrollView.showsHorizontalScrollIndicator = false
@@ -323,19 +258,17 @@ struct FeedDetailView: View {
     @State private var isReadLocal: Bool = false
     @State private var isBookmarked: Bool = false
     @State private var pendingNavigationDirection: NavigationDirection?
+    @State private var pendingInitialHeaderCollapseProgress: CGFloat
     @State private var contentOffset: CGFloat = 0
     @State private var contentOpacity: Double = 1
     @State private var hasAppeared = false
     @State private var measuredPresentationExpansion: CGFloat = 1
-    @State private var lastLiveActivityProgressUpdateTime: TimeInterval = 0
-    @State private var lastLiveActivityProgressValue: CGFloat = -1
     @AppStorage("readerFontScale") private var readerFontScale: Double = 1.0
     @AppStorage("readerFontFamily") private var readerFontFamily: String = ReaderFontFamily.rounded.rawValue
     @AppStorage("readerLineSpacing") private var readerLineSpacing: Double = 1.4
     @AppStorage("readerTextAlignment") private var readerTextAlignmentRaw: String = "left"
     @AppStorage("readerParagraphSpacing") private var readerParagraphSpacing: Double = 0.72
     @AppStorage("readerContentWidth") private var readerContentWidth: Double = 720
-    @AppStorage("readerMediaWidth") private var readerMediaWidth: Double = 90
 
     private enum ActiveSheet: Identifiable {
         case share(payload: String, token: UUID = UUID())
@@ -353,22 +286,25 @@ struct FeedDetailView: View {
          feedColor: Color? = nil,
          onToggleRead: ((Bool) -> Void)? = nil,
          onToggleBookmark: ((Bool) -> Void)? = nil,
+         initialHeaderCollapseProgress: CGFloat = 0,
          isCompactPresentation: Bool = false,
          compactPresentationHeight: CGFloat = FeedDetailLayout.compactPresentationDoubleLineHeight,
          onExpandPresentation: @escaping () -> Void = {},
          onMinimizePresentation: @escaping () -> Void = {},
-         onClosePresentation: @escaping () -> Void = {},
-         onReadingProgressChange: @escaping (CGFloat) -> Void = { _ in }) {
+         onClosePresentation: @escaping () -> Void = {}) {
         self.entry = entry
         self.feedColor = feedColor
         self.onToggleRead = onToggleRead
         self.onToggleBookmark = onToggleBookmark
+        self.initialHeaderCollapseProgress = FeedDetailLayout.clampedProgress(initialHeaderCollapseProgress)
         self.isCompactPresentation = isCompactPresentation
         self.compactPresentationHeight = compactPresentationHeight
         self.onExpandPresentation = onExpandPresentation
         self.onMinimizePresentation = onMinimizePresentation
         self.onClosePresentation = onClosePresentation
-        self.onReadingProgressChange = onReadingProgressChange
+        _pendingInitialHeaderCollapseProgress = State(
+            initialValue: FeedDetailLayout.clampedProgress(initialHeaderCollapseProgress)
+        )
     }
 
     init(entry: FeedEntry,
@@ -377,36 +313,31 @@ struct FeedDetailView: View {
          onNavigateToEntry: @escaping (FeedEntry, NavigationDirection) -> Void,
          onToggleRead: ((Bool) -> Void)? = nil,
          onToggleBookmark: ((Bool) -> Void)? = nil,
+         initialHeaderCollapseProgress: CGFloat = 0,
          isCompactPresentation: Bool = false,
          compactPresentationHeight: CGFloat = FeedDetailLayout.compactPresentationDoubleLineHeight,
          onExpandPresentation: @escaping () -> Void = {},
          onMinimizePresentation: @escaping () -> Void = {},
-         onClosePresentation: @escaping () -> Void = {},
-         onReadingProgressChange: @escaping (CGFloat) -> Void = { _ in }) {
+         onClosePresentation: @escaping () -> Void = {}) {
         self.entry = entry
         self.feedColor = feedColor
         self.entriesProvider = entriesProvider
         self.onNavigateToEntry = onNavigateToEntry
         self.onToggleRead = onToggleRead
         self.onToggleBookmark = onToggleBookmark
+        self.initialHeaderCollapseProgress = FeedDetailLayout.clampedProgress(initialHeaderCollapseProgress)
         self.isCompactPresentation = isCompactPresentation
         self.compactPresentationHeight = compactPresentationHeight
         self.onExpandPresentation = onExpandPresentation
         self.onMinimizePresentation = onMinimizePresentation
         self.onClosePresentation = onClosePresentation
-        self.onReadingProgressChange = onReadingProgressChange
+        _pendingInitialHeaderCollapseProgress = State(
+            initialValue: FeedDetailLayout.clampedProgress(initialHeaderCollapseProgress)
+        )
     }
 
     private func currentIndex(in list: [FeedEntry]) -> Int? {
         list.firstIndex(where: { $0.link == entry.link })
-    }
-
-    private var remainingUnreadCount: Int {
-        entriesProvider().reduce(into: 0) { count, candidate in
-            if !store.isRead(articleID: candidate.link) {
-                count += 1
-            }
-        }
     }
 
     private func goToPrevious() {
@@ -561,13 +492,6 @@ struct FeedDetailView: View {
                                 .transition(.opacity)
                         }
                     } else {
-                        Image(systemName: "eye")
-                            .fontWeight(.light)
-                        Text("\(remainingUnreadCount)")
-                            .contentTransition(.numericText())
-
-                        Text("·")
-
                         Image(systemName: "eyeglasses")
                             .fontWeight(.light)
                         Text(readingTimeLabel)
@@ -620,7 +544,7 @@ struct FeedDetailView: View {
             AppHaptics.selection()
             onMinimizePresentation()
         } label: {
-            Image(systemName: "chevron.down")
+            Image(systemName: "tray.and.arrow.down")
                 .fontWeight(.light)
                 .foregroundStyle(resolvedFeedColor)
         }
@@ -716,6 +640,11 @@ struct FeedDetailView: View {
         }
         .tint(resolvedFeedColor)
         .minimumHitTarget()
+        .simultaneousGesture(
+            TapGesture().onEnded {
+                AppHaptics.selection()
+            }
+        )
         .accessibilityLabel("Weitere Aktionen")
     }
 
@@ -755,6 +684,7 @@ struct FeedDetailView: View {
             )
             let compactOpacity = compactPresentationOpacity(for: expansionProgress)
             let detailOpacity = detailPresentationOpacity(for: expansionProgress)
+            let showsReaderBackToTop = showsReaderBackToTopButton(for: expansionProgress)
 
             ZStack(alignment: .top) {
                 articleSurfaceBackground
@@ -775,9 +705,31 @@ struct FeedDetailView: View {
                     .allowsHitTesting(expansionProgress < 0.58)
                     .accessibilityHidden(expansionProgress >= 0.58)
 
+                if showsReaderBackToTop {
+                    readerBackToTopButton
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .padding(
+                            .bottom,
+                            readerBackToTopBottomPadding(
+                                bottomSafeAreaInset: proxy.safeAreaInsets.bottom,
+                                expansionProgress: expansionProgress
+                            )
+                        )
+                        .transition(
+                            .asymmetric(
+                                insertion: .move(edge: .bottom)
+                                    .combined(with: .opacity)
+                                    .combined(with: .scale(scale: 0.92)),
+                                removal: .move(edge: .bottom)
+                                    .combined(with: .opacity)
+                            )
+                        )
+                        .zIndex(5)
+                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
             .clipped()
+            .animation(.easeInOut(duration: 0.18), value: showsReaderBackToTop)
             .onChange(of: expansionProgress, initial: true) { _, newValue in
                 guard abs(newValue - measuredPresentationExpansion) > 0.002 else { return }
                 if measuredPresentationExpansion < 0.82 && newValue >= 0.82 {
@@ -797,6 +749,63 @@ struct FeedDetailView: View {
             showsBottomToolbar ? .visible : .hidden,
             for: .bottomBar
         )
+    }
+
+    private func showsReaderBackToTopButton(for expansionProgress: CGFloat) -> Bool {
+        !isCompactPresentation
+            && expansionProgress >= 0.82
+            && !isSummaryMode
+            && scrollState.collapseProgress > 0.64
+    }
+
+    private func readerBackToTopBottomPadding(
+        bottomSafeAreaInset: CGFloat,
+        expansionProgress: CGFloat
+    ) -> CGFloat {
+        bottomSafeAreaInset + (expansionProgress >= 0.9 ? 68 : 18)
+    }
+
+    private var readerBackToTopButton: some View {
+        Button {
+            scrollReaderToTop()
+        } label: {
+            Image(systemName: "arrow.up")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(resolvedFeedColor)
+                .frame(width: 32, height: 32)
+                .glassEffect(readerBackToTopGlass, in: Circle())
+                .background {
+                    Circle()
+                        .fill(Color(.systemBackground).opacity(0.42))
+                }
+                .overlay {
+                    Circle()
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.8)
+                }
+                .shadow(color: Color.black.opacity(0.10), radius: 8, x: 0, y: 3)
+        }
+        .buttonStyle(.plain)
+        .minimumHitTarget()
+        .accessibilityLabel("Nach oben")
+        .accessibilityHint("Scrollt zurück zum Artikelanfang")
+    }
+
+    private var readerBackToTopGlass: Glass {
+        Glass.regular
+            .interactive(true)
+    }
+
+    private func scrollReaderToTop() {
+        AppHaptics.lightImpact()
+        let scrollView = webView.scrollView
+        let minimumOffsetY = -scrollView.adjustedContentInset.top
+        scrollView.setContentOffset(
+            CGPoint(x: scrollView.contentOffset.x, y: minimumOffsetY),
+            animated: true
+        )
+        withAnimation(.smooth(duration: 0.18)) {
+            scrollState.collapseProgress = 0
+        }
     }
 
     private func toggleSummaryMode() {
@@ -859,16 +868,6 @@ struct FeedDetailView: View {
                 showsAppleAILabel = false
             }
         }
-    }
-
-    private func updateReadingLiveActivityProgress(_ progress: CGFloat) {
-        let now = CACurrentMediaTime()
-        guard abs(progress - lastLiveActivityProgressValue) >= 0.015 || now - lastLiveActivityProgressUpdateTime >= 2.5 else {
-            return
-        }
-        lastLiveActivityProgressUpdateTime = now
-        lastLiveActivityProgressValue = progress
-        ReadingLiveActivityManager.shared.updateReadingProgress(Double(progress), for: entry.link)
     }
 
     private func handleSummaryGenerationState(_ isGenerating: Bool) {
@@ -935,10 +934,6 @@ struct FeedDetailView: View {
                     .truncationMode(.tail)
                     .multilineTextAlignment(.leading)
 
-                FeedDetailCompactProgressBar(
-                    scrollState: scrollState,
-                    tint: resolvedFeedColor
-                )
             }
 
             Button {
@@ -1002,14 +997,7 @@ struct FeedDetailView: View {
         let contentWidthObserved = paragraphSpacingObserved.onChange(of: readerContentWidth) { _, newValue in
             FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerContentWidth)
         }
-        let mediaWidthObserved = contentWidthObserved.onChange(of: readerMediaWidth) { _, newValue in
-            FeedICloudSyncManager.shared.pushLocalPreferenceValue(newValue, for: FeedStorage.Keys.readerMediaWidth)
-        }
-        let liveActivityObserved = mediaWidthObserved.onChange(of: scrollState.readingProgress, initial: true) { _, newValue in
-            updateReadingLiveActivityProgress(newValue)
-            onReadingProgressChange(newValue)
-        }
-        return AnyView(liveActivityObserved)
+        return AnyView(contentWidthObserved)
     }
 
     private func detailRoot(
@@ -1088,7 +1076,6 @@ struct FeedDetailView: View {
             }
 
             headerLayer
-            progressLayer
             sheetPresenter
         }
     }
@@ -1113,6 +1100,7 @@ struct FeedDetailView: View {
                 htmlContentID: htmlContentID,
                 topInset: effectiveHeaderHeight,
                 scrollState: scrollState,
+                initialHeaderCollapseProgress: pendingInitialHeaderCollapseProgress,
                 onSwipeLeft: goToNext,
                 onSwipeRight: goToPrevious)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1264,14 +1252,6 @@ struct FeedDetailView: View {
         }
     }
 
-    private var progressLayer: some View {
-        FeedDetailReadingProgressLayer(
-            scrollState: scrollState,
-            tint: resolvedFeedColor,
-            isSummaryMode: isSummaryMode
-        )
-    }
-
     private func handleAppear() {
         isReadLocal = store.isRead(articleID: entry.link)
         isBookmarked = isCurrentlyBookmarked()
@@ -1289,9 +1269,11 @@ struct FeedDetailView: View {
     }
 
     private func resetArticlePosition(animated: Bool) {
+        let initialCollapseProgress = pendingInitialHeaderCollapseProgress
         let updates = {
-            scrollState.reset()
+            scrollState.reset(collapseProgress: initialCollapseProgress)
         }
+        pendingInitialHeaderCollapseProgress = 0
 
         if animated {
             withAnimation(.smooth(duration: 0.24)) {
@@ -1365,9 +1347,8 @@ struct FeedDetailView: View {
                                 lineSpacing: $readerLineSpacing,
                                 paragraphSpacing: $readerParagraphSpacing,
                                 contentWidth: $readerContentWidth,
-                                mediaWidth: $readerMediaWidth,
                                 feedColor: .constant(resolvedFeedColor))
-                .presentationDetents([UIStylePolicy.Sheet.mediumDetent])
+                .presentationDetents([UIStylePolicy.Sheet.mediumDetent, .large])
         }
     }
 
@@ -1401,7 +1382,7 @@ struct FeedDetailView: View {
             let rawAttributes = String(result[leadingAttributesRange]) + String(result[trailingAttributesRange])
             let cleanedAttributes = cleanYouTubeIframeAttributes(rawAttributes)
             let replacement = """
-            <iframe\(cleanedAttributes) src="\(normalizedSource)" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen playsinline loading="lazy" referrerpolicy="strict-origin-when-cross-origin">
+            <iframe\(cleanedAttributes) src="\(normalizedSource)" allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen playsinline loading="eager" referrerpolicy="strict-origin-when-cross-origin">
             """
             result.replaceSubrange(openTagRange, with: replacement)
         }
@@ -1697,7 +1678,7 @@ struct FeedDetailView: View {
     }
 
     private func shouldRemoveImageTag(_ tag: String) -> Bool {
-        guard let source = htmlAttribute("src", in: tag), !source.isEmpty else {
+        guard let source = readerImageSource(in: tag), !source.isEmpty else {
             return true
         }
         if source.lowercased().hasPrefix("data:image/svg+xml") {
@@ -1729,6 +1710,39 @@ struct FeedDetailView: View {
         }
 
         return false
+    }
+
+    private func readerImageSource(in tag: String) -> String? {
+        let attributeNames = [
+            "src",
+            "data-src",
+            "data-original",
+            "data-lazy-src",
+            "data-orig-file"
+        ]
+
+        for name in attributeNames {
+            if let value = htmlAttribute(name, in: tag), !value.isEmpty {
+                return value
+            }
+        }
+
+        if let srcset = htmlAttribute("srcset", in: tag) ?? htmlAttribute("data-srcset", in: tag) {
+            return firstImageURL(inSrcset: srcset)
+        }
+
+        return nil
+    }
+
+    private func firstImageURL(inSrcset srcset: String) -> String? {
+        srcset
+            .split(separator: ",")
+            .compactMap { candidate -> String? in
+                let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return nil }
+                return trimmed.split(maxSplits: 1, whereSeparator: \.isWhitespace).first.map(String.init)
+            }
+            .first
     }
 
     private func htmlAttribute(_ name: String, in tag: String) -> String? {
@@ -1855,6 +1869,7 @@ struct FeedDetailView: View {
     private func formattedHTMLContentID(accentHex: String) -> String {
         let rawBodySource = (entry.contentRaw?.isEmpty == false) ? entry.contentRaw! : entry.content
         return [
+            Self.readerHTMLRenderVersion,
             entry.link,
             String(rawBodySource.utf8.count),
             String(readerFontScale),
@@ -1863,7 +1878,6 @@ struct FeedDetailView: View {
             readerTextAlignmentRaw,
             String(readerParagraphSpacing),
             String(readerContentWidth),
-            String(readerMediaWidth),
             accentHex
         ].joined(separator: "|")
     }
@@ -1881,7 +1895,6 @@ struct FeedDetailView: View {
         let fontFamilyCSS = (ReaderFontFamily(rawValue: readerFontFamily) ?? .rounded).cssValue
         let textAlignCSS = readerTextAlignmentRaw == "justified" ? "justify" : readerTextAlignmentRaw
         let rgb = resolvedFeedColor.rgbComponents ?? (0,0,0)
-        let mediaGlow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.16)"
         let mediaShadow: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.14)"
         let codeBackground: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.16)"
         let inlineCodeBackground: String = "rgba(\(rgb.red),\(rgb.green),\(rgb.blue),0.22)"
@@ -1894,22 +1907,71 @@ struct FeedDetailView: View {
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
-              html { overflow-x: hidden; min-height: 100%; background: transparent; }
+              html { overflow-x: hidden; min-height: 100%; background: transparent !important; }
               :root {
+                color-scheme: light dark;
                 --reader-line-height: \(lineHeight);
                 --reader-paragraph-spacing: \(readerParagraphSpacing)em;
                 --reader-content-width: \(readerContentWidth)px;
-                --reader-media-width: \(readerMediaWidth)%;
+                --reader-rollout-duration: 380ms;
               }
               * { box-sizing: border-box; }
-              body { font-family: \(fontFamilyCSS); font-size: \(fontSize)px; min-height: 100%; max-width: var(--reader-content-width); padding: 16px; line-height: 1.35; margin: 0 auto; text-align: \(textAlignCSS); background: transparent; overflow-wrap: break-word; word-break: normal; }
+              body { font-family: \(fontFamilyCSS); font-size: \(fontSize)px; min-height: 100%; max-width: var(--reader-content-width); padding: 16px; line-height: 1.35; margin: 0 auto; text-align: \(textAlignCSS); background: transparent !important; overflow-wrap: break-word; word-break: normal; }
+              body.reader-rollout {
+                opacity: 0;
+              }
+              body.reader-rollout-ready {
+                opacity: 1;
+                transition: opacity 120ms ease-out;
+              }
+              body.reader-rollout-ready .reader-rollout-item {
+                opacity: 0;
+                transform: translateY(-5px);
+                -webkit-clip-path: inset(0 0 100% 0);
+                clip-path: inset(0 0 100% 0);
+                transition:
+                  opacity var(--reader-rollout-duration) ease-out var(--reader-rollout-delay, 0ms),
+                  transform var(--reader-rollout-duration) cubic-bezier(0.16, 1, 0.3, 1) var(--reader-rollout-delay, 0ms),
+                  -webkit-clip-path var(--reader-rollout-duration) cubic-bezier(0.16, 1, 0.3, 1) var(--reader-rollout-delay, 0ms),
+                  clip-path var(--reader-rollout-duration) cubic-bezier(0.16, 1, 0.3, 1) var(--reader-rollout-delay, 0ms);
+                will-change: opacity, transform, clip-path;
+              }
+              body.reader-rollout-ready .reader-rollout-item.reader-rollout-media {
+                transition-duration: 480ms, 480ms, 520ms, 520ms;
+              }
+              body.reader-rollout-ready .reader-rollout-item.reader-rollout-visible {
+                opacity: 1;
+                transform: translateY(0);
+                -webkit-clip-path: inset(0 0 0 0);
+                clip-path: inset(0 0 0 0);
+              }
+              body.reader-rollout img.reader-media-failed,
+              body.reader-rollout picture.reader-media-failed,
+              body.reader-rollout figure.reader-media-failed {
+                opacity: 1;
+                animation: none;
+              }
               p, li, blockquote, h1, h2, h3, h4, h5, h6 { overflow-wrap: anywhere; }
-              p { margin: 0 0 var(--reader-paragraph-spacing); line-height: var(--reader-line-height); }
+              p { margin: 0 0 calc(var(--reader-paragraph-spacing) * 0.72); line-height: var(--reader-line-height); }
               p:last-child { margin-bottom: 0; }
               h1, h2, h3, h4, h5, h6 {
                 line-height: 1.2;
-                margin: 1.15em 0 0.46em;
+                margin: 0.82em 0 0.26em;
                 text-align: left;
+              }
+              p + h1, p + h2, p + h3, p + h4, p + h5, p + h6,
+              ul + h1, ul + h2, ul + h3, ul + h4, ul + h5, ul + h6,
+              ol + h1, ol + h2, ol + h3, ol + h4, ol + h5, ol + h6,
+              blockquote + h1, blockquote + h2, blockquote + h3,
+              blockquote + h4, blockquote + h5, blockquote + h6 {
+                margin-top: 0.96em;
+              }
+              h1 + p, h2 + p, h3 + p, h4 + p, h5 + p, h6 + p,
+              h1 + ul, h2 + ul, h3 + ul, h4 + ul, h5 + ul, h6 + ul,
+              h1 + ol, h2 + ol, h3 + ol, h4 + ol, h5 + ol, h6 + ol,
+              h1 + blockquote, h2 + blockquote, h3 + blockquote,
+              h4 + blockquote, h5 + blockquote, h6 + blockquote {
+                margin-top: 0.18em;
               }
               h1:first-child, h2:first-child, h3:first-child,
               h4:first-child, h5:first-child, h6:first-child { margin-top: 0; }
@@ -1918,12 +1980,14 @@ struct FeedDetailView: View {
               h3 { font-size: 1.18em; }
               h4, h5, h6 { font-size: 1em; }
               blockquote {
-                margin: 0.9em 0;
-                padding: 0.1em 0 0.1em 0.85em;
+                margin: 0.42em 0 0.68em;
+                padding: 0.04em 0 0.04em 0.75em;
                 border-left: 3px solid \(accentHex);
               }
+              blockquote p { margin-bottom: 0.44em; }
+              blockquote p:last-child { margin-bottom: 0; }
               figure {
-                margin: 1em 0;
+                margin: 0.8em 0;
               }
               figcaption {
                 margin-top: -0.35em;
@@ -1933,27 +1997,65 @@ struct FeedDetailView: View {
                 text-align: center;
               }
               ul, ol {
-                margin: 0.45em 0 0.78em;
+                margin: 0.18em 0 0.52em;
                 padding-inline-start: 1.18em;
               }
               li {
-                margin: 0.16em 0;
+                margin: 0.08em 0;
                 padding-inline-start: 0.08em;
-                line-height: 1.35;
+                line-height: var(--reader-line-height);
               }
               li > p {
-                margin: 0.18em 0;
-                line-height: 1.35;
+                margin: 0.04em 0;
+                line-height: var(--reader-line-height);
               }
               li > p:first-child { margin-top: 0; }
               li > p:last-child { margin-bottom: 0; }
-              li > ul, li > ol { margin: 0.32em 0 0.46em; }
+              li + li { margin-top: 0.34em; }
+              li > ul, li > ol { margin: 0.2em 0 0.34em; }
+              table {
+                display: table !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                border-collapse: collapse;
+                border-spacing: 0;
+                margin: 0.46em 0 0.72em !important;
+                clear: both;
+              }
+              p + table, div + table, section + table, figure + table,
+              table:first-child {
+                margin-top: 0.18em !important;
+              }
+              table + p, table + div, table + section {
+                margin-top: 0.28em !important;
+              }
+              th, td {
+                padding: 0.42em 0.5em;
+                line-height: 1.32;
+                vertical-align: top;
+                border-bottom: 1px solid rgba(127,127,127,0.24);
+              }
+              th {
+                font-weight: 700;
+                text-align: left;
+              }
               @media (prefers-color-scheme: dark) { body { color: #EAEAEA; } a { color: \(accentHex); } }
               @media (prefers-color-scheme: light) { body { color: #111111; } a { color: \(accentHex); } }
-              img, video, iframe { display: block !important; max-width: var(--reader-media-width) !important; border-radius: 10px; margin: 0.9em auto !important; float: none !important; clear: both; background: transparent !important; box-shadow: 0 10px 24px \(mediaShadow), 0 0 0 1px rgba(255,255,255,0.08), 0 0 12px \(mediaGlow), 0 0 20px \(mediaGlow); }
+              img, video, iframe { display: block !important; max-width: 100% !important; border-radius: 10px; margin: 0.9em auto !important; float: none !important; clear: both; background: transparent !important; box-shadow: 0 8px 18px \(mediaShadow); }
               figure > img, figure > video, figure > iframe { margin-top: 0 !important; }
               img, video { width: auto !important; height: auto !important; }
-              iframe { width: var(--reader-media-width) !important; height: auto !important; aspect-ratio: 16/9; }
+              iframe { width: 100% !important; height: auto !important; aspect-ratio: 16/9; }
+              iframe[src*="open.spotify.com"], iframe[src*="spotify.com/embed"] {
+                height: 352px !important;
+                max-height: min(352px, 70vh) !important;
+                aspect-ratio: auto !important;
+              }
+              iframe[src*="open.spotify.com/embed/track"], iframe[src*="spotify.com/embed/track"],
+              iframe[src*="open.spotify.com/embed/episode"], iframe[src*="spotify.com/embed/episode"] {
+                height: 152px !important;
+                max-height: min(152px, 42vh) !important;
+              }
+              img.reader-media-failed, picture.reader-media-failed, figure.reader-media-failed { display: none !important; }
               iframe:not([src]), iframe[src=""], img:not([src]), img[src=""] { display: none !important; }
               pre, code, kbd, samp { font-family: 'SFMono-Regular', Menlo, Consolas, monospace; text-align: left; }
               code, kbd, samp {
@@ -1983,6 +2085,18 @@ struct FeedDetailView: View {
                 border-radius: 0;
                 font-size: inherit;
                 line-height: inherit;
+              }
+              @media (prefers-reduced-motion: reduce) {
+                body.reader-rollout,
+                body.reader-rollout-ready,
+                body.reader-rollout-ready .reader-rollout-item {
+                  opacity: 1;
+                  transform: none;
+                  -webkit-clip-path: inset(0 0 0 0);
+                  clip-path: inset(0 0 0 0);
+                  animation: none;
+                  transition: none;
+                }
               }
             </style>
             <script>
@@ -2020,26 +2134,159 @@ struct FeedDetailView: View {
                   document.querySelectorAll('p, div, section, aside, figure').forEach(function (element) {
                     var text = (element.textContent || '').replace(/\\s+/g, '');
                     if (text.length > 0) { return; }
-                    if (element.querySelector('img, video, iframe, audio, source, picture, canvas, svg')) { return; }
+                    if (element.querySelector('img, video, iframe, audio, source, picture, canvas, svg, table')) { return; }
                     element.remove();
+                  });
+                }
+
+                function normalizeTableSpacing() {
+                  document.querySelectorAll('table').forEach(function (table) {
+                    table.removeAttribute('height');
+                    table.style.marginTop = '';
+                    table.style.paddingTop = '';
+
+                    var parent = table.parentElement;
+                    if (parent && parent.children.length === 1) {
+                      parent.style.marginTop = '';
+                      parent.style.paddingTop = '';
+                    }
+
+                    var previous = table.previousElementSibling;
+                    while (previous) {
+                      var text = (previous.textContent || '').replace(/\\s+/g, '');
+                      var hasContent = text.length > 0 || previous.querySelector('img, video, iframe, audio, picture, canvas, svg, table');
+                      if (hasContent) { break; }
+                      var removable = previous;
+                      previous = previous.previousElementSibling;
+                      removable.remove();
+                    }
+                  });
+                }
+
+                function firstSrcsetURL(srcset) {
+                  return (srcset || '').split(',').map(function (candidate) {
+                    return candidate.trim().split(/\\s+/)[0];
+                  }).filter(Boolean)[0] || '';
+                }
+
+                function bestLazyImageSource(image) {
+                  return image.getAttribute('src')
+                    || image.getAttribute('data-src')
+                    || image.getAttribute('data-original')
+                    || image.getAttribute('data-lazy-src')
+                    || image.getAttribute('data-orig-file')
+                    || firstSrcsetURL(image.getAttribute('srcset'))
+                    || firstSrcsetURL(image.getAttribute('data-srcset'));
+                }
+
+                function hideFailedMedia(image) {
+                  image.classList.add('reader-media-failed');
+                  var picture = image.closest('picture');
+                  if (picture) { picture.classList.add('reader-media-failed'); }
+                  var figure = image.closest('figure');
+                  if (figure && !(figure.textContent || '').trim()) {
+                    figure.classList.add('reader-media-failed');
+                  }
+                }
+
+                function isMediaElement(element) {
+                  return element.matches('img, video, iframe');
+                }
+
+                function mediaContainerFor(element) {
+                  if (!isMediaElement(element)) { return null; }
+                  var container = element.closest('figure, picture');
+                  return container && container.querySelector('img, video, iframe') ? container : null;
+                }
+
+                function isMediaBlock(element) {
+                  return isMediaElement(element)
+                    || (element.matches('figure, picture') && !!element.querySelector('img, video, iframe'));
+                }
+
+                function shouldRevealElement(element) {
+                  if (!element || element.classList.contains('reader-media-failed')) { return false; }
+                  if (element.matches('script, style, noscript, source')) { return false; }
+                  if (isMediaElement(element) && mediaContainerFor(element)) { return false; }
+                  if (isMediaElement(element)) {
+                    return !!(element.getAttribute('src') || element.getAttribute('srcset'));
+                  }
+                  if ((element.textContent || '').trim().length > 0) { return true; }
+                  return !!element.querySelector('img, video, iframe, pre, table, blockquote');
+                }
+
+                function revealElement(element, delay) {
+                  element.style.setProperty('--reader-rollout-delay', Math.max(0, delay) + 'ms');
+                  element.classList.add('reader-rollout-visible');
+                }
+
+                function setupReaderRollout() {
+                  var body = document.body;
+                  if (!body) { return; }
+
+                  var selector = [
+                    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                    'p', 'blockquote', 'li', 'pre', 'table',
+                    'figure', 'picture', 'img', 'video', 'iframe'
+                  ].join(',');
+
+                  var elements = Array.prototype.slice.call(document.querySelectorAll(selector))
+                    .filter(shouldRevealElement);
+
+                  elements.forEach(function (element) {
+                    element.classList.add('reader-rollout-item');
+                    if (isMediaBlock(element)) {
+                      element.classList.add('reader-rollout-media');
+                    }
+                  });
+
+                  requestAnimationFrame(function () {
+                    var delay = 0;
+                    body.classList.add('reader-rollout-ready');
+                    elements.forEach(function (element) {
+                      var media = isMediaBlock(element);
+                      revealElement(element, delay);
+                      delay += media ? 540 : 74;
+                    });
                   });
                 }
 
                 document.querySelectorAll('img').forEach(function (image) {
                   var width = parseFloat(image.getAttribute('width') || '0');
                   var height = parseFloat(image.getAttribute('height') || '0');
-                  if (isNoisyURL(image.getAttribute('src')) || (width > 0 && width <= 2 && height > 0 && height <= 2)) {
+                  var source = bestLazyImageSource(image);
+                  if (source && !image.getAttribute('src')) {
+                    image.setAttribute('src', source);
+                  }
+                  if (image.getAttribute('data-srcset') && !image.getAttribute('srcset')) {
+                    image.setAttribute('srcset', image.getAttribute('data-srcset'));
+                  }
+                  image.setAttribute('loading', 'eager');
+                  image.setAttribute('fetchpriority', 'high');
+                  image.setAttribute('decoding', 'async');
+                  image.addEventListener('error', function () { hideFailedMedia(image); });
+                  image.addEventListener('load', function () {
+                    if (image.naturalWidth > 0 && image.naturalWidth <= 2 && image.naturalHeight > 0 && image.naturalHeight <= 2) {
+                      hideFailedMedia(image);
+                    }
+                  });
+                  if (isNoisyURL(source) || (width > 0 && width <= 2 && height > 0 && height <= 2)) {
                     image.remove();
+                  } else if (image.complete && image.naturalWidth === 0) {
+                    hideFailedMedia(image);
                   }
                 });
 
                 document.querySelectorAll('iframe').forEach(function (frame) {
                   if (isNoisyURL(frame.getAttribute('src'))) {
                     frame.remove();
+                  } else {
+                    frame.setAttribute('loading', 'eager');
                   }
                 });
 
                 removeEmptyBlocks();
+                normalizeTableSpacing();
 
                 document.querySelectorAll('iframe[src]').forEach(function (frame) {
                   try {
@@ -2052,10 +2299,12 @@ struct FeedDetailView: View {
                     }
                   } catch (_) {}
                 });
+
+                setupReaderRollout();
               });
             </script>
           </head>
-          <body>\(bodyHTML)</body>
+          <body class="reader-rollout">\(bodyHTML)</body>
         </html>
         """
         Self.formattedHTMLCache.setObject(
@@ -2168,6 +2417,7 @@ private struct WebView: UIViewRepresentable {
     let htmlContentID: String
     let topInset: CGFloat
     let scrollState: FeedDetailScrollState
+    let initialHeaderCollapseProgress: CGFloat
     var onSwipeLeft: () -> Void = {}
     var onSwipeRight: () -> Void = {}
     private var youtubeEmbedBaseURL: URL? {
@@ -2176,6 +2426,7 @@ private struct WebView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
+        configureWebViewSurface(webView)
         webView.scrollView.delegate = context.coordinator
         webView.navigationDelegate = context.coordinator
         context.coordinator.configureGestureRecognizers(for: webView)
@@ -2185,11 +2436,12 @@ private struct WebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        configureWebViewSurface(uiView)
         context.coordinator.onSwipeLeft = onSwipeLeft
         context.coordinator.onSwipeRight = onSwipeRight
 
         if context.coordinator.lastLoadedContentID != htmlContentID {
-            context.coordinator.resetScrollState()
+            context.coordinator.resetScrollState(collapseProgress: initialHeaderCollapseProgress)
             loadContent(into: uiView, coordinator: context.coordinator, forcePinToTop: true)
             return
         }
@@ -2203,6 +2455,13 @@ private struct WebView: UIViewRepresentable {
             onSwipeLeft: onSwipeLeft,
             onSwipeRight: onSwipeRight
         )
+    }
+
+    private func configureWebViewSurface(_ webView: WKWebView) {
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.underPageBackgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
     }
 
     private func setVerticalScrollIndicatorTopInset(_ topInset: CGFloat, for scrollView: UIScrollView) {
@@ -2236,19 +2495,27 @@ private struct WebView: UIViewRepresentable {
         coordinator.prepareForContentLoad(
             in: webView.scrollView,
             topInset: topInset,
+            collapseProgress: initialHeaderCollapseProgress,
             animated: false
         )
 
-        if let localFileURL = OfflineArticleArchive.prepareOfflineHTMLDocument(
-            forArticleLink: articleLink,
-            articleURL: articleURL,
-            htmlDocument: htmlContent
-        ), let readAccessURL = OfflineArticleArchive.readAccessURL() {
+        if let localFileURL = OfflineArticleArchive.existingPreparedReaderHTMLDocumentURL(forContentID: htmlContentID),
+           let readAccessURL = OfflineArticleArchive.readAccessURL() {
             coordinator.lastLoadedFilePath = localFileURL.path
             webView.loadFileURL(localFileURL, allowingReadAccessTo: readAccessURL)
         } else {
             coordinator.lastLoadedFilePath = nil
-            webView.loadHTMLString(htmlContent, baseURL: youtubeEmbedBaseURL)
+            webView.loadHTMLString(htmlContent, baseURL: articleURL ?? youtubeEmbedBaseURL)
+            let contentID = htmlContentID
+            let document = htmlContent
+            let sourceURL = articleURL
+            Task.detached(priority: .utility) {
+                OfflineArticleArchive.prepareReaderHTMLDocumentIfNeeded(
+                    forContentID: contentID,
+                    articleURL: sourceURL,
+                    htmlDocument: document
+                )
+            }
         }
 
         applyTopInset(topInset, to: webView.scrollView, forcePinToTop: forcePinToTop)
@@ -2258,13 +2525,17 @@ private struct WebView: UIViewRepresentable {
         let scrollState: FeedDetailScrollState
         var onSwipeLeft: () -> Void
         var onSwipeRight: () -> Void
-        private let collapseUpdateThreshold: CGFloat = 0.002
-        private let readingUpdateThreshold: CGFloat = 0.002
-        private let minimumUpdateInterval: CFTimeInterval = 1.0 / 60.0
+        private let collapseUpdateThreshold: CGFloat = 0.012
+        private let minimumUpdateInterval: CFTimeInterval = 1.0 / 30.0
+        private let readingProgressUpdateThreshold: CGFloat = 0.01
+        private let readingProgressUpdateInterval: CFTimeInterval = 0.75
         private var lastProgressUpdateTime: CFTimeInterval = 0
+        private var lastReadingProgressUpdateTime: CFTimeInterval = 0
+        private var lastPublishedReadingProgress: CGFloat = -1
         private var didInstallSwipeRecognizers = false
         private var pendingTopReset = false
         private var pendingTopInset: CGFloat = 0
+        private var pendingInitialCollapseProgress: CGFloat = 0
         var lastLoadedArticleLink: String?
         var lastLoadedContentID: String?
         var lastLoadedHTML: String = ""
@@ -2307,7 +2578,7 @@ private struct WebView: UIViewRepresentable {
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            updateScrollProgress(in: scrollView, force: false)
+            updateHeaderCollapseProgress(in: scrollView, force: false)
         }
 
         func scrollViewDidEndDragging(
@@ -2315,19 +2586,19 @@ private struct WebView: UIViewRepresentable {
             willDecelerate decelerate: Bool
         ) {
             if !decelerate {
-                updateScrollProgress(in: scrollView, force: true)
+                updateHeaderCollapseProgress(in: scrollView, force: true)
             }
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-            updateScrollProgress(in: scrollView, force: true)
+            updateHeaderCollapseProgress(in: scrollView, force: true)
         }
 
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
-            updateScrollProgress(in: scrollView, force: true)
+            updateHeaderCollapseProgress(in: scrollView, force: true)
         }
 
-        private func updateScrollProgress(in scrollView: UIScrollView, force: Bool) {
+        private func updateHeaderCollapseProgress(in scrollView: UIScrollView, force: Bool) {
             let now = CACurrentMediaTime()
             guard force || now - lastProgressUpdateTime >= minimumUpdateInterval else {
                 return
@@ -2342,36 +2613,53 @@ private struct WebView: UIViewRepresentable {
 
             let clampedOffsetY = min(max(currentOffset, minOffsetY), maxOffsetY)
             let scrollDistanceFromTop = max(0, clampedOffsetY - minOffsetY)
-            let shouldUpdateChrome = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
+            let scrollableDistance = max(1, maxOffsetY - minOffsetY)
+            let isActivelyScrolling = scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating
             let progress = FeedDetailLayout.clampedProgress(
                 scrollDistanceFromTop / FeedDetailLayout.headerCollapseRange
             )
+            let readingProgress = FeedDetailLayout.clampedProgress(scrollDistanceFromTop / scrollableDistance)
+            publishReadingProgress(readingProgress, force: force, now: now)
 
-            // Header chrome should follow user-driven scroll, while reading progress
-            // also needs to track WebKit layout and programmatic offset updates.
-            if shouldUpdateChrome
-                && (force || abs(progress - scrollState.collapseProgress) > collapseUpdateThreshold) {
+            // Keep active WebKit scrolling mostly native. SwiftUI follows only
+            // coarse visible progress changes instead of every WebKit scroll tick.
+            let chromeCanMove = progress < 1 || scrollState.collapseProgress < 1
+            let progressChanged = force || abs(progress - scrollState.collapseProgress) > collapseUpdateThreshold
+            if progressChanged
+                && (
+                    force
+                    || (isActivelyScrolling && chromeCanMove)
+                ) {
                 updateCollapseProgress(progress)
-            }
-            let scrollableDistance = max(0, maxOffsetY - minOffsetY)
-            let clamped = scrollableDistance > 0
-                ? FeedDetailLayout.clampedProgress((clampedOffsetY - minOffsetY) / scrollableDistance)
-                : 1
-            if force || abs(clamped - scrollState.readingProgress) > readingUpdateThreshold {
-                updateReadingProgress(clamped)
             }
         }
 
-        func resetScrollState() {
-            updateCollapseProgress(0)
-            updateReadingProgress(0)
+        func resetScrollState(collapseProgress: CGFloat = 0) {
+            lastProgressUpdateTime = 0
+            updateCollapseProgress(FeedDetailLayout.clampedProgress(collapseProgress))
+        }
+
+        private func publishReadingProgress(_ progress: CGFloat, force: Bool, now: CFTimeInterval) {
+            guard let link = lastLoadedArticleLink, !link.isEmpty else { return }
+            let shouldPublish = force
+                || abs(progress - lastPublishedReadingProgress) >= readingProgressUpdateThreshold
+                || now - lastReadingProgressUpdateTime >= readingProgressUpdateInterval
+            guard shouldPublish else { return }
+
+            lastPublishedReadingProgress = progress
+            lastReadingProgressUpdateTime = now
+            Task { @MainActor in
+                ReadingLiveActivityManager.shared.updateReadingProgress(Double(progress), for: link)
+            }
         }
 
         func prepareForContentLoad(in scrollView: UIScrollView,
                                    topInset: CGFloat,
+                                   collapseProgress: CGFloat,
                                    animated: Bool) {
             pendingTopReset = true
             pendingTopInset = max(0, topInset)
+            pendingInitialCollapseProgress = FeedDetailLayout.clampedProgress(collapseProgress)
             enforceTopPosition(in: scrollView, animated: animated)
         }
 
@@ -2386,7 +2674,7 @@ private struct WebView: UIViewRepresentable {
                 CGPoint(x: scrollView.contentOffset.x, y: minimumOffsetY),
                 animated: animated
             )
-            resetScrollState()
+            resetScrollState(collapseProgress: pendingInitialCollapseProgress)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -2403,11 +2691,6 @@ private struct WebView: UIViewRepresentable {
         private func updateCollapseProgress(_ newValue: CGFloat) {
             if scrollState.collapseProgress != newValue {
                 scrollState.collapseProgress = newValue
-            }
-        }
-        private func updateReadingProgress(_ newValue: CGFloat) {
-            if scrollState.readingProgress != newValue {
-                scrollState.readingProgress = newValue
             }
         }
 
@@ -2518,7 +2801,7 @@ Jeder Stichpunkt soll in sich vollstaendig, lesbar und direkt verstandlich sein.
     }
 
     private var sourceSignature: String {
-        Self.sourceSignature(for: preparedSourceText)
+        Self.sourceSignature(for: preparedSourceText, title: title)
     }
 
     private var isGenerating: Bool {
@@ -2526,6 +2809,11 @@ Jeder Stichpunkt soll in sich vollstaendig, lesbar und direkt verstandlich sein.
             return true
         }
         return false
+    }
+
+    private var summaryFooterHeight: CGFloat {
+        let textLineHeight = UIFont.preferredFont(forTextStyle: .subheadline).lineHeight + 5
+        return FeedDetailLayout.compactToolbarHitTarget + textLineHeight * 2
     }
 
     var body: some View {
@@ -2581,7 +2869,7 @@ Jeder Stichpunkt soll in sich vollstaendig, lesbar und direkt verstandlich sein.
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .ready(let bullets):
-            ScrollView {
+            ScrollView(.vertical, showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(bullets.enumerated()), id: \.offset) { index, bullet in
                         HStack(alignment: .firstTextBaseline, spacing: UIStylePolicy.Spacing.large) {
@@ -2608,6 +2896,7 @@ Jeder Stichpunkt soll in sich vollstaendig, lesbar und direkt verstandlich sein.
                         }
                     }
                 }
+                .padding(.bottom, summaryFooterHeight)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .textSelection(.enabled)
@@ -2886,8 +3175,9 @@ Jeder Stichpunkt soll in sich vollstaendig, lesbar und direkt verstandlich sein.
         return String(normalized.prefix(20_000))
     }
 
-    private nonisolated static func sourceSignature(for sourceText: String) -> String {
-        let digest = SHA256.hash(data: Data(("summary-v4|" + sourceText).utf8))
+    private nonisolated static func sourceSignature(for sourceText: String, title: String) -> String {
+        let normalizedTitle = HTMLText.normalizePreviewSpacing(in: title)
+        let digest = SHA256.hash(data: Data(("summary-v5-title|" + normalizedTitle + "|" + sourceText).utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
@@ -2925,8 +3215,13 @@ Jeder Stichpunkt soll in sich vollstaendig, lesbar und direkt verstandlich sein.
         Wiederhole weder Titel noch dieselbe Aussage in anderer Form.
         Keine Zeile darf leer sein.
         Beende jede Zeile als vollstaendigen Satz. Trenne niemals ein Datum, einen Namen oder ein Zitat auf zwei Zeilen.
+        Nutze den Titel nur als Fokus-Signal, um aus dem Artikeltext die wichtigsten passenden Inhalte auszuwaehlen.
+        Erklaere, paraphrasiere oder interpretiere den Titel nicht.
+        Formuliere keine Zeile nach dem Muster "Der Titel besagt..." oder "Es geht um...".
+        Der Titel ist keine Faktenquelle: Jede Aussage muss im Artikeltext belegt sein.
 
-        Titel (nur Kontext, kein Beleg): \(title)
+        Artikeltitel:
+        \(title)
 
         Artikeltext:
         \(sourceText)

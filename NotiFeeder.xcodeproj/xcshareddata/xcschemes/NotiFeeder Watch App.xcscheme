@@ -46,7 +46,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E59E77202F8658A0006A872F"
             BuildableName = "NotiFeeder Watch App.app"
-            BlueprintName = "NotiFeeder Watch App"
             ReferencedContainer = "container:NotiFeeder.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -63,7 +62,6 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "E59E77202F8658A0006A872F"
             BuildableName = "NotiFeeder Watch App.app"
-            BlueprintName = "NotiFeeder Watch App"
             ReferencedContainer = "container:NotiFeeder.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
